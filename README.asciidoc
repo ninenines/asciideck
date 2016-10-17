@@ -1,0 +1,12 @@
+= Asciideck
+
+Asciidoc for Erlang.
+
+The `asciideck` project aims to provide a parser for Asciidoc
+files returning an abstract syntax tree that can be further
+manipulated or used to convert documents to different formats.
+
+== Getting help
+
+* Official IRC Channel: #ninenines on irc.freenode.net
+* http://ninenines.eu/services[Commercial Support]
