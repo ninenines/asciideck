@@ -203,7 +203,7 @@ p1_maybe_p(Lines=[{LN, _}|_], AST, St) ->
 	p1_p(Lines, AST, St, LN, []).
 
 p1_p([{_, <<>>}|Tail], AST0, St, LN, [_|Acc]) ->
-	Text = format(iolist_to_binary(lists:reverse(Acc))),
+	Text = format(iolist_to_binary(lists:reverse(Acc)), LN, St),
 	case AST0 of
 		[{block_title, Title}|AST] ->
 			p1(Tail, [paragraph(Text, #{title => Title}, ann(LN, St))|AST], St);
@@ -211,38 +211,64 @@ p1_p([{_, <<>>}|Tail], AST0, St, LN, [_|Acc]) ->
 			p1(Tail, [paragraph(Text, #{}, ann(LN, St))|AST], St)
 	end;
 p1_p([{_, Line}|Tail], AST, St, LN, Acc) ->
+	%% @todo We need to keep line/col information. To do this
+	%% we probably should keep an index of character number -> line/col
+	%% that we pass to the format function. Otherwise the line/col
+	%% information on text will point to the paragraph start.
 	p1_p(Tail, AST, St, LN, [<<" ">>, Line|Acc]).
 
 %% Inline formatting.
 
 %% @todo Probably do it as part of the node functions that require it.
-format(Text) ->
-	case format(Text, [], <<>>, $\s) of
+format(Text, LN, St) ->
+	case format(Text, LN, St, [], <<>>, $\s) of
 		[Bin] when is_binary(Bin) -> Bin;
 		Formatted -> Formatted
 	end.
 
-format(<<>>, Acc, <<>>, _) ->
+format(<<>>, _, _, Acc, <<>>, _) ->
 	lists:reverse(Acc);
-format(<<>>, Acc, BinAcc, _) ->
+format(<<>>, _, _, Acc, BinAcc, _) ->
 	lists:reverse([BinAcc|Acc]);
-format(<< "link:", Rest0/bits >>, Acc, BinAcc, Prev) when Prev =:= $\s ->
+format(<< "link:", Rest0/bits >>, LN, St, Acc0, BinAcc, Prev) when Prev =:= $\s ->
 	case re:run(Rest0, "^([^[]*)\\[([^]]*)\\](.*)", [{capture, all, binary}]) of
-		nomatch -> format(Rest0, Acc, << BinAcc/binary, "link:" >>, $:);
-		{match, [_, Link, Text, Rest]} -> format(Rest, [{link, Link, Text}, BinAcc|Acc], <<>>, $])
+		nomatch ->
+			format(Rest0, LN, St, Acc0, << BinAcc/binary, "link:" >>, $:);
+		{match, [_, Link, Text, Rest]} ->
+			Acc = case BinAcc of
+				<<>> -> Acc0;
+				_ -> [BinAcc|Acc0]
+			end,
+			format(Rest, LN, St, [rel_link(Text, Link, ann(LN, St))|Acc], <<>>, $])
 	end;
-format(<< $*, Rest0/bits >>, Acc, BinAcc, Prev) when Prev =:= $\s ->
-	case binary:split(Rest0, << $* >>) of
-		[_] -> format(Rest0, Acc, << BinAcc/binary, $* >>, $*);
-		[Em, Rest] -> format(Rest, [{em, Em}, BinAcc|Acc], <<>>, $*)
+format(<< C, Rest0/bits >>, LN, St, Acc0, BinAcc, Prev) when Prev =:= $\s ->
+	%% @todo In some cases we must format inside the quoted text too.
+	%% Therefore we need to have some information about what to do here.
+	Quotes = #{
+		$* => {strong, text},
+		$` => {mono, literal}
+	},
+	case maps:get(C, Quotes, undefined) of
+		undefined ->
+			format(Rest0, LN, St, Acc0, << BinAcc/binary, C >>, C);
+		{NodeType, QuotedType} ->
+			case binary:split(Rest0, << C >>) of
+				[_] ->
+					format(Rest0, LN, St, Acc0, << BinAcc/binary, $* >>, $*);
+				[QuotedText0, Rest] ->
+					Acc = case BinAcc of
+						<<>> -> Acc0;
+						_ -> [BinAcc|Acc0]
+					end,
+					QuotedText = case QuotedType of
+						text -> format(QuotedText0, LN, St);
+						literal -> QuotedText0
+					end,
+					format(Rest, LN, St, [quoted(NodeType, QuotedText, ann(LN, St))|Acc], <<>>, $*)
+			end
 	end;
-format(<< $`, Rest0/bits >>, Acc, BinAcc, Prev) when Prev =:= $\s ->
-	case binary:split(Rest0, << $` >>) of
-		[_] -> format(Rest0, Acc, << BinAcc/binary, $` >>, $`);
-		[Mono, Rest] -> format(Rest, [{mono, Mono}, BinAcc|Acc], <<>>, $`)
-	end;
-format(<< C, Rest/bits >>, Acc, BinAcc, _) ->
-	format(Rest, Acc, << BinAcc/binary, C >>, C).
+format(<< C, Rest/bits >>, LN, St, Acc, BinAcc, _) ->
+	format(Rest, LN, St, Acc, << BinAcc/binary, C >>, C).
 
 %% Second pass.
 
@@ -307,6 +333,12 @@ ll(Nodes, Attrs, Ann) ->
 
 paragraph(Text, Attrs, Ann) ->
 	{p, Attrs, Text, Ann}.
+
+quoted(NodeType, Text, Ann) ->
+	{NodeType, #{}, Text, Ann}.
+
+rel_link(Text, Link, Ann) ->
+	{rel_link, #{target => Link}, Text, Ann}.
 
 row(Nodes, Ann) ->
 	{row, #{}, Nodes, Ann}.

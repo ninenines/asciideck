@@ -69,7 +69,7 @@ man([{ll, _Attrs, Items, _Ann}|Tail], Acc0) ->
 %% @todo Attributes.
 %% Currently acts as if options="headers" was always set.
 man([{table, _TAttrs, [{row, RowAttrs, Headers0, RowAnn}|Rows0], _TAnn}|Tail], Acc0) ->
-	Headers = [{cell, CAttrs, [{p, Attrs, [{em, P}], Ann}], CAnn}
+	Headers = [{cell, CAttrs, [{p, Attrs, [{strong, #{}, P, CAnn}], Ann}], CAnn}
 		|| {cell, CAttrs, [{p, Attrs, P, Ann}], CAnn} <- Headers0],
 	Rows = [{row, RowAttrs, Headers, RowAnn}|Rows0],
 	Acc = [[
@@ -133,16 +133,16 @@ man_table_contents_cols([{cell, _CAttrs, [{p, _PAttrs, Text, _PAnn}], _CAnn}|Tai
 
 man_format(Text) when is_binary(Text) ->
 	Text;
-man_format({link, Link, Text}) ->
+man_format({rel_link, #{target := Link}, Text, _}) ->
 	case re:run(Text, "^([-_:.a-zA-Z]*)(\\([0-9]\\))$", [{capture, all, binary}]) of
 		nomatch -> [Text, " (", Link, ")"];
 		{match, [_, ManPage, ManSection]} -> ["\\fB", ManPage, "\\fR", ManSection]
 	end;
-man_format({em, Text}) ->
+man_format({strong, _, Text, _}) ->
 	["\\fB", man_format(Text), "\\fR"];
 %% We are already using a monospace font.
 %% @todo Maybe there's a readable formatting we could use to differentiate from normal text?
-man_format({mono, Text}) ->
+man_format({mono, _, Text, _}) ->
 	man_format(Text);
 man_format(Text) when is_list(Text) ->
 	[man_format(T) || T <- Text].

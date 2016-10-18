@@ -39,6 +39,46 @@ empty_line_spaces(_) ->
 	[] = parse(" \n  \n   \n    \n     \n"),
 	ok.
 
+%% Text formatting.
+
+quoted_text_strong(_) ->
+	doc("Strong text formatting. (10.1)"),
+	[{p, _, [{strong, _, <<"Hello beautiful world!">>, _}], _}] =
+		parse("*Hello beautiful world!*"),
+	[{p, _, [{strong, _, <<"Hello">>, _}, <<" beautiful world!">>], _}] =
+		parse("*Hello* beautiful world!"),
+	[{p, _, [<<"Hello ">>, {strong, _, <<"beautiful">>, _}, <<" world!">>], _}] =
+		parse("Hello *beautiful* world!"),
+	[{p, _, [<<"Hello beautiful ">>, {strong, _, <<"world!">>, _}], _}] =
+		parse("Hello beautiful *world!*"),
+	[{p, _, [<<"Hello beautiful ">>, {strong, _, <<"multiline world!">>, _}, <<" lol">>], _}] =
+		parse("Hello beautiful *multiline\nworld!* lol"),
+	%% Nested formatting.
+	[{p, _, [{strong, _, [
+		<<"Hello ">>,
+		{rel_link, #{target := <<"downloads/cowboy-2.0.tgz">>}, <<"2.0">>, _},
+		<<" world!">>
+	], _}], _}] =
+		parse("*Hello link:downloads/cowboy-2.0.tgz[2.0] world!*"),
+	ok.
+
+quoted_text_literal_mono(_) ->
+	doc("Literal monospace text formatting. (10.1)"),
+	[{p, _, [{mono, _, <<"Hello beautiful world!">>, _}], _}] =
+		parse("`Hello beautiful world!`"),
+	[{p, _, [{mono, _, <<"Hello">>, _}, <<" beautiful world!">>], _}] =
+		parse("`Hello` beautiful world!"),
+	[{p, _, [<<"Hello ">>, {mono, _, <<"beautiful">>, _}, <<" world!">>], _}] =
+		parse("Hello `beautiful` world!"),
+	[{p, _, [<<"Hello beautiful ">>, {mono, _, <<"world!">>, _}], _}] =
+		parse("Hello beautiful `world!`"),
+	[{p, _, [<<"Hello beautiful ">>, {mono, _, <<"multiline world!">>, _}, <<" lol">>], _}] =
+		parse("Hello beautiful `multiline\nworld!` lol"),
+	%% No text formatting must occur inside backticks.
+	[{p, _, [{mono, _, <<"Hello *beautiful* world!">>, _}], _}] =
+		parse("`Hello *beautiful* world!`"),
+	ok.
+
 %% Title.
 
 %% @todo Long titles. (11.1)
@@ -274,6 +314,18 @@ labeled_list(_) ->
 %% @todo Very little was implemented from labeled lists. They need more work.
 
 %% Macros.
+
+rel_link(_) ->
+	doc("Relative links are built using the link:<target>[<caption>] macro. (21.1.3)"),
+	[{p, _, [
+		{rel_link, #{target := <<"downloads/cowboy-2.0.tgz">>}, <<"2.0">>, _}
+	], _}] = parse("link:downloads/cowboy-2.0.tgz[2.0]"),
+	[{p, _, [
+		<<"Download ">>,
+		{rel_link, #{target := <<"downloads/cowboy-2.0.zip">>}, <<"Cowboy 2.0">>, _},
+		<<" as zip">>
+	], _}] = parse("Download link:downloads/cowboy-2.0.zip[Cowboy 2.0] as zip"),
+	ok.
 
 comment_line(_) ->
 	doc("Lines starting with two slashes are treated as comments. (21.2.3)"),
