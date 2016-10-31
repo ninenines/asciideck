@@ -19,7 +19,7 @@
 -export([translate/2]).
 
 translate(AST, Opts) ->
-	{Man, Section, Output0} = man(AST),
+	{Man, Section, Output0} = translate_man(AST, Opts),
 	{CompressExt, Output} = case Opts of
 		#{compress := gzip} -> {".gz", zlib:gzip(Output0)};
 		_ -> {"", Output0}
@@ -32,17 +32,21 @@ translate(AST, Opts) ->
 			Output
 	end.
 
-man([{title, #{level := 0}, Title0, _Ann}|AST]) ->
+translate_man([{title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
 	[Title, << Section:1/binary, _/bits >>] = binary:split(Title0, <<"(">>),
-	Extra1 = "2016-10-17", %% @todo
-	Extra2 = "Project 1.0", %% @todo
-	Extra3 = "Project Function Reference", %% @todo
+	Extra1 = maps:get(extra1, Opts, today()),
+	Extra2 = maps:get(extra2, Opts, ""),
+	Extra3 = maps:get(extra3, Opts, ""),
 	{Title, Section, [
 		".TH \"", Title, "\" \"", Section, "\" \"",
 			Extra1, "\" \"", Extra2, "\" \"", Extra3, "\"\n"
 		".ta T 4n\n\\&\n",
 		man(AST, [])
 	]}.
+
+today() ->
+	{{Y, M, D}, _} = calendar:universal_time(),
+	io_lib:format("~b-~2.10.0b-~2.10.0b", [Y, M, D]).
 
 man([], Acc) ->
 	lists:reverse(Acc);
