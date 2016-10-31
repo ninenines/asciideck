@@ -33,6 +33,7 @@ translate(AST, Opts) ->
 	end.
 
 translate_man([{title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
+	ensure_name_section(AST),
 	[Title, << Section:1/binary, _/bits >>] = binary:split(Title0, <<"(">>),
 	Extra1 = maps:get(extra1, Opts, today()),
 	Extra2 = maps:get(extra2, Opts, ""),
@@ -43,6 +44,14 @@ translate_man([{title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
 		".ta T 4n\n\\&\n",
 		man(AST, [])
 	]}.
+
+ensure_name_section([{title, #{level := 1}, Title, _}|_]) ->
+	case string:to_lower(string:strip(binary_to_list(Title))) of
+		"name" -> ok;
+		_ -> error(badarg)
+	end;
+ensure_name_section(_) ->
+	error(badarg).
 
 today() ->
 	{{Y, M, D}, _} = calendar:universal_time(),
