@@ -12,26 +12,37 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+%% The Groff documentation section 4.1 has a pretty good
+%% description of the format expected for man pages.
 -module(asciideck_to_manpage).
 
--export([translate/1]).
+-export([translate/2]).
 
-translate(AST) ->
-	Output = man(AST),
-	file:write_file("/tmp/man.3.gz", zlib:gzip(Output)),
-	ok.
+translate(AST, Opts) ->
+	{Man, Section, Output0} = man(AST),
+	{CompressExt, Output} = case Opts of
+		#{compress := gzip} -> {".gz", zlib:gzip(Output0)};
+		_ -> {"", Output0}
+	end,
+	case Opts of
+		#{outdir := Path} ->
+			file:write_file(binary_to_list(iolist_to_binary(
+				[Path, "/", Man, ".", Section, CompressExt])), Output);
+		_ ->
+			Output
+	end.
 
 man([{title, #{level := 0}, Title0, _Ann}|AST]) ->
 	[Title, << Section:1/binary, _/bits >>] = binary:split(Title0, <<"(">>),
 	Extra1 = "2016-10-17", %% @todo
 	Extra2 = "Project 1.0", %% @todo
 	Extra3 = "Project Function Reference", %% @todo
-	[
+	{Title, Section, [
 		".TH \"", Title, "\" \"", Section, "\" \"",
 			Extra1, "\" \"", Extra2, "\" \"", Extra3, "\"\n"
 		".ta T 4n\n\\&\n",
 		man(AST, [])
-	].
+	]}.
 
 man([], Acc) ->
 	lists:reverse(Acc);

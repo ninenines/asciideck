@@ -20,6 +20,7 @@
 -export([parse/2]).
 
 -export([to_manpage/1]).
+-export([to_manpage/2]).
 
 parse_file(Filename) ->
 	parse_file(Filename, #{}).
@@ -37,4 +38,7 @@ parse(Data, St) ->
 	parse(iolist_to_binary(Data), St).
 
 to_manpage(AST) ->
-	asciideck_to_manpage:translate(AST).
+	asciideck_to_manpage:translate(AST, #{}).
+
+to_manpage(AST, Opts) ->
+	asciideck_to_manpage:translate(AST, Opts).
