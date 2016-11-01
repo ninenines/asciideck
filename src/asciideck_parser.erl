@@ -229,6 +229,10 @@ p1_p([{_, <<>>}|Tail], AST0, St, LN, [_|Acc]) ->
 		AST ->
 			p1(Tail, [paragraph(Text, #{}, ann(LN, St))|AST], St)
 	end;
+%% Ignore comments inside paragraphs.
+%% @todo Keep in the AST.
+p1_p([{_, <<"//", _/bits>>}|Tail], AST, St, LN, Acc) ->
+	p1_p(Tail, AST, St, LN, Acc);
 p1_p([{_, Line}|Tail], AST, St, LN, Acc) ->
 	%% @todo We need to keep line/col information. To do this
 	%% we probably should keep an index of character number -> line/col
