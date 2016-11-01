@@ -163,7 +163,7 @@ man_table_contents_cols([{cell, _CAttrs, [{p, _PAttrs, Text, _PAnn}], _CAnn}|Tai
 man_format(Text) when is_binary(Text) ->
 	Text;
 man_format({rel_link, #{target := Link}, Text, _}) ->
-	case re:run(Text, "^([-_:.a-zA-Z]*)(\\([0-9]\\))$", [{capture, all, binary}]) of
+	case re:run(Text, "^([-_:.a-zA-Z0-9]*)(\\([0-9]\\))$", [{capture, all, binary}]) of
 		nomatch -> [Text, " (", Link, ")"];
 		{match, [_, ManPage, ManSection]} -> ["\\fB", ManPage, "\\fR", ManSection]
 	end;
