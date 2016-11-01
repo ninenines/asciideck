@@ -175,8 +175,8 @@ p1_li_glob(Tail = [{LN, << "*", _/bits >>}|_], Acc) ->
 	{Tail, lists:reverse([{LN, <<>>}|Acc])};
 p1_li_glob(Tail = [{LN, <<>>}|_], Acc) ->
 	{Tail, lists:reverse([{LN, <<>>}|Acc])};
-p1_li_glob([{_, <<"+">>}|Tail], Acc) ->
-	p1_li_glob(Tail, [<<>>|Acc]);
+p1_li_glob([{LN, <<"+">>}|Tail], Acc) ->
+	p1_li_glob(Tail, [{LN, <<>>}|Acc]);
 p1_li_glob([Line|Tail], Acc) ->
 	p1_li_glob(Tail, [Line|Acc]).
 
