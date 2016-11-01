@@ -111,14 +111,19 @@ man([_Ignore|Tail], Acc) ->
 
 man_ll([], Acc) ->
 	Acc;
-man_ll([{li, #{label := Label}, [{p, _PAttrs, Text, _PAnn}], _LiAnn}|Tail], Acc0) ->
+man_ll([{li, #{label := Label}, Item, _LiAnn}|Tail], Acc0) ->
 	Acc = [[
 		".PP\n"
 		"\\fB", Label, "\\fR\n",
 		".RS 4\n",
-		man_format(Text), "\n"
+		man_ll_item(Item),
 		".RE\n"]|Acc0],
 	man_ll(Tail, Acc).
+
+man_ll_item([{p, _PAttrs, Text, _PAnn}]) ->
+	[man_format(Text), "\n"];
+man_ll_item([{p, _PAttrs, Text, _PAnn}|Tail]) ->
+	[man_format(Text), "\n\n", man_ll_item(Tail)].
 
 man_ul([], Acc) ->
 	Acc;

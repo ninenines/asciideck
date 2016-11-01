@@ -180,16 +180,35 @@ p1_li_glob([{LN, <<"+">>}|Tail], Acc) ->
 p1_li_glob([Line|Tail], Acc) ->
 	p1_li_glob(Tail, [Line|Acc]).
 
+%% Skip initial empty lines and then glob like normal lists.
+p1_ll_glob(Lines=[{_, Line}|Tail]) ->
+io:format("line ~s~n", [Line]),
+	case trim_ws(Line) of
+		<<>> -> p1_ll_glob(Tail);
+		_ -> p1_ll_glob(Lines, [])
+	end.
+
+%% Glob everything until empty line.
+%% @todo Detect next list.
+p1_ll_glob(Tail = [{LN, <<>>}|_], Acc) ->
+	{Tail, lists:reverse([{LN, <<>>}|Acc])};
+p1_ll_glob([{LN, <<"+">>}|Tail], Acc) ->
+	p1_ll_glob(Tail, [{LN, <<>>}|Acc]);
+p1_ll_glob([Line|Tail], Acc) ->
+	p1_ll_glob(Tail, [Line|Acc]).
+
 p1_text(Lines=[{LN, Line}|Tail], AST, St) ->
 	case binary:split(<< Line/binary, $\s >>, <<":: ">>) of
 		%% Nothing else on the line.
 		[Label, <<>>] ->
-			p1(Tail, [{label, Label, ann(LN, St)}|AST], St);
+			{Tail1, Glob} = p1_ll_glob(Tail),
+			p1(Tail1, [{label, Label, p1(Glob, [], St), ann(LN, St)}|AST], St);
 		%% Text on the same line.
 		[Label, Text0] ->
 			Size = byte_size(Text0) - 1,
 			<< Text:Size/binary, _ >> = Text0,
-			p1([{LN, Text}|Tail], [{label, Label, ann(LN, St)}|AST], St);
+			{Tail1, Glob} = p1_ll_glob([{LN, Text}|Tail]),
+			p1(Tail1, [{label, Label, p1(Glob, [], St), ann(LN, St)}|AST], St);
 		%% Not a labeled list.
 		_ ->
 			p1_maybe_p(Lines, AST, St)
@@ -274,9 +293,9 @@ format(<< C, Rest/bits >>, LN, St, Acc, BinAcc, _) ->
 
 p2([], Acc) ->
 	lists:reverse(Acc);
-p2([{label, Label, Ann}, Item|Tail], Acc) ->
+p2([{label, Label, Item, Ann}|Tail], Acc) ->
 	%% @todo Handle this like other lists.
-	p2(Tail, [ll([li([Item], #{label => Label}, Ann)], #{}, Ann)|Acc]);
+	p2(Tail, [ll([li(Item, #{label => Label}, Ann)], #{}, Ann)|Acc]);
 p2(Tail0=[{uli1, _, UlAnn}|_], Acc) ->
 	{LIs0, Tail} = lists:splitwith(fun({uli1, _, _}) -> true; (_) -> false end, Tail0),
 	LIs = [li(I, LiAnn) || {uli1, I, LiAnn} <- LIs0],
