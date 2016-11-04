@@ -182,7 +182,6 @@ p1_li_glob([Line|Tail], Acc) ->
 
 %% Skip initial empty lines and then glob like normal lists.
 p1_ll_glob(Lines=[{_, Line}|Tail]) ->
-io:format("line ~s~n", [Line]),
 	case trim_ws(Line) of
 		<<>> -> p1_ll_glob(Tail);
 		_ -> p1_ll_glob(Lines, [])
