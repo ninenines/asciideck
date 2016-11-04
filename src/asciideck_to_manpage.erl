@@ -120,6 +120,8 @@ man_ll([{li, #{label := Label}, Item, _LiAnn}|Tail], Acc0) ->
 		".RE\n"]|Acc0],
 	man_ll(Tail, Acc).
 
+man_ll_item([{ul, _Attrs, Items, _Ann}]) ->
+	[man_ul(Items, []), "\n"];
 man_ll_item([{p, _PAttrs, Text, _PAnn}]) ->
 	[man_format(Text), "\n"];
 man_ll_item([{p, _PAttrs, Text, _PAnn}|Tail]) ->

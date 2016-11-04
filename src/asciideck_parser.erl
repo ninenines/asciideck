@@ -193,6 +193,8 @@ p1_ll_glob(Tail = [{LN, <<>>}|_], Acc) ->
 	{Tail, lists:reverse([{LN, <<>>}|Acc])};
 p1_ll_glob([{LN, <<"+">>}|Tail], Acc) ->
 	p1_ll_glob(Tail, [{LN, <<>>}|Acc]);
+p1_ll_glob([{LN, <<" ", Line/bits>>}|Tail], Acc) ->
+	p1_ll_glob([{LN, trim_ws(Line)}|Tail], Acc);
 p1_ll_glob([Line|Tail], Acc) ->
 	p1_ll_glob(Tail, [Line|Acc]).
 
@@ -296,9 +298,9 @@ format(<< C, Rest/bits >>, LN, St, Acc, BinAcc, _) ->
 
 p2([], Acc) ->
 	lists:reverse(Acc);
-p2([{label, Label, Item, Ann}|Tail], Acc) ->
+p2([{label, Label, Items, Ann}|Tail], Acc) ->
 	%% @todo Handle this like other lists.
-	p2(Tail, [ll([li(Item, #{label => Label}, Ann)], #{}, Ann)|Acc]);
+	p2(Tail, [ll([li(p2(Items, []), #{label => Label}, Ann)], #{}, Ann)|Acc]);
 p2(Tail0=[{uli1, _, UlAnn}|_], Acc) ->
 	{LIs0, Tail} = lists:splitwith(fun({uli1, _, _}) -> true; (_) -> false end, Tail0),
 	LIs = [li(I, LiAnn) || {uli1, I, LiAnn} <- LIs0],
