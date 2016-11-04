@@ -129,8 +129,8 @@ p1_table(Tail, AST, St, LN) ->
 %% @todo Strip whitespace at the beginning of the cell if on the same line.
 p1_cell(Tail=[{_, NextLine}|_], AST0, St, LN, Text) ->
 	case p1_cell_split(Text, <<>>) of
-		[_] ->
-			AST1 = [nl, cell(p1([{LN, trim_ws(Text)}, {LN, <<>>}], [], St), ann(LN, St))|AST0],
+		[Cell] ->
+			AST1 = [nl, cell(p1([{LN, trim_ws(Cell)}, {LN, <<>>}], [], St), ann(LN, St))|AST0],
 			AST = case NextLine of
 				<<>> -> [nl|AST1];
 				_ -> AST1
@@ -143,7 +143,7 @@ p1_cell(Tail=[{_, NextLine}|_], AST0, St, LN, Text) ->
 p1_cell_split(<<>>, Acc) ->
 	[Acc];
 p1_cell_split(<< $\\, $|, Rest/bits >>, Acc) ->
-	p1_cell_split(Rest, << Acc/binary, $\\, $| >>);
+	p1_cell_split(Rest, << Acc/binary, $| >>);
 p1_cell_split(<< $|, Rest/bits >>, Acc) ->
 	[Acc, Rest];
 p1_cell_split(<< C, Rest/bits >>, Acc) ->
