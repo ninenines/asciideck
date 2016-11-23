@@ -6,6 +6,16 @@ The `asciideck` project aims to provide a parser for Asciidoc
 files returning an abstract syntax tree that can be further
 manipulated or used to convert documents to different formats.
 
+== About Asciidoc
+
+The general Asciidoc syntax can be read in details from:
+
+* http://asciidoc.org/userguide.html
+* http://asciidoctor.org/docs/asciidoc-syntax-quick-reference/
+
+Note that this project is a work in progress and everything is
+not available at this point.
+
 == Getting help
 
 * Official IRC Channel: #ninenines on irc.freenode.net
