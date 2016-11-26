@@ -195,8 +195,13 @@ p1_ll_glob([{LN, <<"+">>}|Tail], Acc) ->
 	p1_ll_glob(Tail, [{LN, <<>>}|Acc]);
 p1_ll_glob([{LN, <<" ", Line/bits>>}|Tail], Acc) ->
 	p1_ll_glob([{LN, trim_ws(Line)}|Tail], Acc);
-p1_ll_glob([Line|Tail], Acc) ->
-	p1_ll_glob(Tail, [Line|Acc]).
+p1_ll_glob(Lines=[Line={LN, Text}|Tail], Acc) ->
+	case binary:split(<< Text/binary, $\s >>, <<":: ">>) of
+		[_, _] ->
+			{Lines, lists:reverse([{LN, <<>>}|Acc])};
+		_ ->
+			p1_ll_glob(Tail, [Line|Acc])
+	end.
 
 p1_text(Lines=[{LN, Line}|Tail], AST, St) ->
 	case binary:split(<< Line/binary, $\s >>, <<":: ">>) of

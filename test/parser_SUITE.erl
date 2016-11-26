@@ -303,6 +303,16 @@ labeled_list(_) ->
 	[{ll, _, [
 		{li, #{label := <<"The label">>}, [{p, _, <<"The value!">>, _}], _}
 	], _}] = parse("The label:: The value!"),
+	%% @todo Currently this returns two ll. This is a bug but it gives
+	%% me the result I want, or close enough, for now.
+	[{ll, _, [
+		{li, #{label := <<"The label">>}, [{p, _, <<"The value!">>, _}], _}
+	], _},
+	{ll, _, [
+		{li, #{label := <<"More labels">>}, [{p, _, <<"More values!">>, _}], _}
+	], _}] = parse(
+		"The label:: The value!\n"
+		"More labels:: More values!\n"),
 	[{ll, _, [
 		{li, #{label := <<"The label">>}, [{p, _, <<"The value!">>, _}], _}
 	], _}] = parse(
