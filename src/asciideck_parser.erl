@@ -214,7 +214,8 @@ p1_text(Lines=[{LN, Line}|Tail], AST, St) ->
 			Size = byte_size(Text0) - 1,
 			<< Text:Size/binary, _ >> = Text0,
 			{Tail1, Glob} = p1_ll_glob([{LN, Text}|Tail]),
-			p1(Tail1, [{label, Label, p1(Glob, [], St), ann(LN, St)}|AST], St);
+			%% Text on the same line is necessarily a paragraph I believe.
+			p1_p(Tail1, [{label, Label, p1(Glob, [], St), ann(LN, St)}|AST], St, LN, []);
 		%% Not a labeled list.
 		_ ->
 			p1_maybe_p(Lines, AST, St)
