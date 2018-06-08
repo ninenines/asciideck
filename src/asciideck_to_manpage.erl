@@ -1,4 +1,4 @@
-%% Copyright (c) 2016, Loïc Hoguin <essen@ninenines.eu>
+%% Copyright (c) 2016-2018, Loïc Hoguin <essen@ninenines.eu>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
@@ -19,7 +19,7 @@
 -export([translate/2]).
 
 translate(AST, Opts) ->
-	{Man, Section, Output0} = translate_man(AST, Opts),
+	{Man, Section, Output0} = man(AST, Opts),
 	{CompressExt, Output} = case Opts of
 		#{compress := gzip} -> {".gz", zlib:gzip(Output0)};
 		_ -> {"", Output0}
@@ -32,7 +32,9 @@ translate(AST, Opts) ->
 			Output
 	end.
 
-translate_man([{title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
+%% Header of the man page file.
+
+man([{section_title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
 	ensure_name_section(AST),
 	[Title, << Section:1/binary, _/bits >>] = binary:split(Title0, <<"(">>),
 	Extra1 = maps:get(extra1, Opts, today()),
@@ -42,10 +44,10 @@ translate_man([{title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
 		".TH \"", Title, "\" \"", Section, "\" \"",
 			Extra1, "\" \"", Extra2, "\" \"", Extra3, "\"\n"
 		".ta T 4n\n\\&\n",
-		man(AST, [])
+		ast(AST)
 	]}.
 
-ensure_name_section([{title, #{level := 1}, Title, _}|_]) ->
+ensure_name_section([{section_title, #{level := 1}, Title, _}|_]) ->
 	case string:to_lower(string:strip(binary_to_list(Title))) of
 		"name" -> ok;
 		_ -> error(badarg)
@@ -57,22 +59,56 @@ today() ->
 	{{Y, M, D}, _} = calendar:universal_time(),
 	io_lib:format("~b-~2.10.0b-~2.10.0b", [Y, M, D]).
 
-man([], Acc) ->
-	lists:reverse(Acc);
-man([{title, #{level := 1}, Title, _Ann}|Tail], Acc) ->
-	man(Tail, [[".SH ", string:to_upper(binary_to_list(Title)), "\n"]|Acc]);
-man([{title, #{level := 2}, Title, _Ann}|Tail], Acc) ->
-	man(Tail, [[".SS ", Title, "\n"]|Acc]);
-man([{p, _Attrs, Text, _Ann}|Tail], Acc) ->
-	man(Tail, [[".LP\n", man_format(Text), "\n.sp\n"]|Acc]);
-man([{listing, Attrs, Listing, _Ann}|Tail], Acc0) ->
-	Acc1 = case Attrs of
-		#{title := Title} ->
-			[[".PP\n\\fB", Title, "\\fR\n"]|Acc0];
-		_ ->
-			Acc0
-	end,
-	Acc = [[
+%% Loop over all types of AST nodes.
+
+ast(AST) ->
+	fold(AST, fun ast_node/1).
+
+fold(AST, Fun) ->
+	lists:reverse(lists:foldl(
+		fun(Node, Acc) -> [Fun(Node)|Acc] end,
+		[], AST)).
+
+ast_node(Node={Type, _, _, _}) ->
+	try
+		case Type of
+			section_title -> section_title(Node);
+			paragraph -> paragraph(Node);
+			listing_block -> listing_block(Node);
+			list -> list(Node);
+			table -> table(Node);
+			comment_line -> comment_line(Node);
+			_ ->
+				io:format("Ignored AST node ~p~n", [Node]),
+				[]
+		end
+	catch _:_ ->
+		io:format("Ignored AST node ~p~n", [Node]),
+		[]
+	end.
+
+%% Section titles.
+
+section_title({section_title, #{level := 1}, Title, _}) ->
+	[".SH ", string:to_upper(binary_to_list(Title)), "\n"];
+section_title({section_title, #{level := 2}, Title, _}) ->
+	[".SS ", Title, "\n"].
+
+%% Paragraphs.
+
+paragraph({paragraph, _, Text, _}) ->
+	[".LP\n", inline(Text), "\n.sp\n"].
+
+%% Listing blocks.
+
+listing_block({listing_block, Attrs, Listing, _}) ->
+	[
+		case Attrs of
+			#{<<"title">> := Title} ->
+				[".PP\n\\fB", Title, "\\fR\n"];
+			_ ->
+				[]
+		end,
 		".if n \\{\\\n"
 		".RS 4\n"
 		".\\}\n"
@@ -82,55 +118,18 @@ man([{listing, Attrs, Listing, _Ann}|Tail], Acc0) ->
 		".fi\n"
 		".if n \\{\\\n"
 		".RE\n"
-		".\\}\n"]|Acc1],
-	man(Tail, Acc);
-man([{ul, _Attrs, Items, _Ann}|Tail], Acc0) ->
-	Acc = man_ul(Items, Acc0),
-	man(Tail, Acc);
-man([{ll, _Attrs, Items, _Ann}|Tail], Acc0) ->
-	Acc = man_ll(Items, Acc0),
-	man(Tail, Acc);
-%% @todo Attributes.
-%% Currently acts as if options="headers" was always set.
-man([{table, _TAttrs, [{row, RowAttrs, Headers0, RowAnn}|Rows0], _TAnn}|Tail], Acc0) ->
-	Headers = [{cell, CAttrs, [{p, Attrs, [{strong, #{}, P, CAnn}], Ann}], CAnn}
-		|| {cell, CAttrs, [{p, Attrs, P, Ann}], CAnn} <- Headers0],
-	Rows = [{row, RowAttrs, Headers, RowAnn}|Rows0],
-	Acc = [[
-		".TS\n"
-		"allbox tab(:);\n",
-		man_table_style(Rows, []),
-		man_table_contents(Rows),
-		".TE\n"
-		".sp 1\n"]|Acc0],
-	man(Tail, Acc);
-%% Skip everything we don't understand.
-man([_Ignore|Tail], Acc) ->
-	io:format("Ignore ~p~n", [_Ignore]), %% @todo lol io:format
-	man(Tail, Acc).
+		".\\}\n"
+	].
 
-man_ll([], Acc) ->
-	Acc;
-man_ll([{li, #{label := Label}, Item, _LiAnn}|Tail], Acc0) ->
-	Acc = [[
-		".PP\n"
-		"\\fB", Label, "\\fR\n",
-		".RS 4\n",
-		man_ll_item(Item),
-		".RE\n"]|Acc0],
-	man_ll(Tail, Acc).
+%% Lists.
 
-man_ll_item([{ul, _Attrs, Items, _Ann}]) ->
-	[man_ul(Items, []), "\n"];
-man_ll_item([{p, _PAttrs, Text, _PAnn}]) ->
-	[man_format(Text), "\n"];
-man_ll_item([{p, _PAttrs, Text, _PAnn}|Tail]) ->
-	[man_format(Text), "\n\n", man_ll_item(Tail)].
+list({list, #{type := bulleted}, Items, _}) ->
+	fold(Items, fun bulleted_list_item/1);
+list({list, #{type := labeled}, Items, _}) ->
+	fold(Items, fun labeled_list_item/1).
 
-man_ul([], Acc) ->
-	Acc;
-man_ul([{li, _LiAttrs, [{p, _PAttrs, Text, _PAnn}], _LiAnn}|Tail], Acc0) ->
-	Acc = [[
+bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
+	[
 		".ie n \\{\\\n"
 		".RS 2\n"
 		"\\h'-02'\\(bu\\h'+01'\\c\n"
@@ -140,40 +139,85 @@ man_ul([{li, _LiAttrs, [{p, _PAttrs, Text, _PAnn}], _LiAnn}|Tail], Acc0) ->
 		".sp -1\n"
 		".IP \\(bu 2.3\n"
 		".\\}\n",
-		man_format(Text), "\n"
-		".RE\n"]|Acc0],
-	man_ul(Tail, Acc).
+		inline(Text), "\n",
+		ast(AST),
+		".RE\n"
+	].
 
-man_table_style([], [_|Acc]) ->
-	lists:reverse([".\n"|Acc]);
-man_table_style([{row, _, Cols, _}|Tail], Acc) ->
-	man_table_style(Tail, [$\n, man_table_style_cols(Cols, [])|Acc]).
+labeled_list_item({list_item, #{label := Label}, [{paragraph, _, Text, _}|AST], _}) ->
+	[
+		".PP\n"
+		"\\fB", inline(Label), "\\fR\n",
+		".RS 4\n",
+		inline(Text), "\n",
+		ast(AST),
+		".RE\n"
+	].
 
-man_table_style_cols([], [_|Acc]) ->
-	lists:reverse(Acc);
-man_table_style_cols([{cell, _, _, _}|Tail], Acc) ->
-	man_table_style_cols(Tail, [$\s, "lt"|Acc]).
+%% Tables.
 
-man_table_contents(Rows) ->
-	[man_table_contents_cols(Cols, []) || {row, _, Cols, _} <- Rows].
+table({table, _, Rows0, _}) ->
+	Rows = table_apply_options(Rows0),
+	[
+		".TS\n"
+		"allbox tab(:);\n",
+		table_style(Rows), ".\n",
+		table_contents(Rows),
+		".TE\n"
+		".sp 1\n"
+	].
 
-man_table_contents_cols([], [_|Acc]) ->
-	lists:reverse(["\n"|Acc]);
-man_table_contents_cols([{cell, _CAttrs, [{p, _PAttrs, Text, _PAnn}], _CAnn}|Tail], Acc) ->
-	man_table_contents_cols(Tail, [$:, "\nT}", man_format(Text), "T{\n"|Acc]).
+%% @todo Currently acts as if options="headers" was always set.
+table_apply_options([{row, RAttrs, Headers0, RAnn}|Tail]) ->
+	Headers = [{cell, CAttrs, [{strong, #{}, CText, CAnn}], CAnn}
+		|| {cell, CAttrs, CText, CAnn} <- Headers0],
+	[{row, RAttrs, Headers, RAnn}|Tail].
 
-man_format(Text) when is_binary(Text) ->
+table_style(Rows) ->
+	[[table_style_cells(Cells), "\n"]
+		|| {row, _, Cells, _} <- Rows].
+
+table_style_cells(Cells) ->
+	["lt " || {cell, _, _, _} <- Cells].
+
+table_contents(Rows) ->
+	[[table_contents_cells(Cells), "\n"]
+		|| {row, _, Cells, _} <- Rows].
+
+table_contents_cells([FirstCell|Cells]) ->
+	[table_contents_cell(FirstCell),
+		[[":", table_contents_cell(Cell)] || Cell <- Cells]].
+
+table_contents_cell({cell, _, Text, _}) ->
+	["T{\n", inline(Text), "\nT}"].
+
+%% Comment lines are printed in the generated file
+%% but are not visible in viewers.
+
+comment_line({comment_line, _, Text, _}) ->
+	["\\# ", Text, "\n"].
+
+%% Inline formatting.
+
+inline(Text) when is_binary(Text) ->
 	Text;
-man_format({rel_link, #{target := Link}, Text, _}) ->
+%% When the link is the text we only print it once.
+inline({link, #{target := Link}, Link, _}) ->
+	Link;
+inline({link, #{target := Link}, Text, _}) ->
 	case re:run(Text, "^([-_:.a-zA-Z0-9]*)(\\([0-9]\\))$", [{capture, all, binary}]) of
 		nomatch -> [Text, " (", Link, ")"];
 		{match, [_, ManPage, ManSection]} -> ["\\fB", ManPage, "\\fR", ManSection]
 	end;
-man_format({strong, _, Text, _}) ->
-	["\\fB", man_format(Text), "\\fR"];
+inline({emphasized, _, Text, _}) ->
+	["\\fI", inline(Text), "\\fR"];
+inline({strong, _, Text, _}) ->
+	["\\fB", inline(Text), "\\fR"];
 %% We are already using a monospace font.
-%% @todo Maybe there's a readable formatting we could use to differentiate from normal text?
-man_format({mono, _, Text, _}) ->
-	man_format(Text);
-man_format(Text) when is_list(Text) ->
-	[man_format(T) || T <- Text].
+inline({inline_literal_passthrough, _, Text, _}) ->
+	inline(Text);
+%% Xref links appear as plain text in manuals.
+inline({xref, _, Text, _}) ->
+	inline(Text);
+inline(Text) when is_list(Text) ->
+	[inline(T) || T <- Text].

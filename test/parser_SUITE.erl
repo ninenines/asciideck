@@ -1,4 +1,4 @@
-%% Copyright (c) 2016, Loïc Hoguin <essen@ninenines.eu>
+%% Copyright (c) 2016-2018, Loïc Hoguin <essen@ninenines.eu>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
@@ -14,14 +14,17 @@
 
 -module(parser_SUITE).
 -compile(export_all).
+-compile(nowarn_export_all).
 
 -import(asciideck, [parse/1]).
 -import(ct_helper, [doc/1]).
 
 all() ->
-	ct_helper:all(?MODULE).
+	[{group, blocks}].
 
 %% @todo Test formatting too!
+groups() ->
+	[{blocks, [parallel], ct_helper:all(?MODULE)}].
 
 %% Empty lines.
 
@@ -43,20 +46,20 @@ empty_line_spaces(_) ->
 
 quoted_text_strong(_) ->
 	doc("Strong text formatting. (10.1)"),
-	[{p, _, [{strong, _, <<"Hello beautiful world!">>, _}], _}] =
+	[{paragraph, _, [{strong, _, <<"Hello beautiful world!">>, _}], _}] =
 		parse("*Hello beautiful world!*"),
-	[{p, _, [{strong, _, <<"Hello">>, _}, <<" beautiful world!">>], _}] =
+	[{paragraph, _, [{strong, _, <<"Hello">>, _}, <<" beautiful world!">>], _}] =
 		parse("*Hello* beautiful world!"),
-	[{p, _, [<<"Hello ">>, {strong, _, <<"beautiful">>, _}, <<" world!">>], _}] =
+	[{paragraph, _, [<<"Hello ">>, {strong, _, <<"beautiful">>, _}, <<" world!">>], _}] =
 		parse("Hello *beautiful* world!"),
-	[{p, _, [<<"Hello beautiful ">>, {strong, _, <<"world!">>, _}], _}] =
+	[{paragraph, _, [<<"Hello beautiful ">>, {strong, _, <<"world!">>, _}], _}] =
 		parse("Hello beautiful *world!*"),
-	[{p, _, [<<"Hello beautiful ">>, {strong, _, <<"multiline world!">>, _}, <<" lol">>], _}] =
+	[{paragraph, _, [<<"Hello beautiful ">>, {strong, _, <<"multiline world!">>, _}, <<" lol">>], _}] =
 		parse("Hello beautiful *multiline\nworld!* lol"),
 	%% Nested formatting.
-	[{p, _, [{strong, _, [
+	[{paragraph, _, [{strong, _, [
 		<<"Hello ">>,
-		{rel_link, #{target := <<"downloads/cowboy-2.0.tgz">>}, <<"2.0">>, _},
+		{link, #{target := <<"downloads/cowboy-2.0.tgz">>}, <<"2.0">>, _},
 		<<" world!">>
 	], _}], _}] =
 		parse("*Hello link:downloads/cowboy-2.0.tgz[2.0] world!*"),
@@ -64,18 +67,18 @@ quoted_text_strong(_) ->
 
 quoted_text_literal_mono(_) ->
 	doc("Literal monospace text formatting. (10.1)"),
-	[{p, _, [{mono, _, <<"Hello beautiful world!">>, _}], _}] =
+	[{paragraph, _, [{inline_literal_passthrough, _, <<"Hello beautiful world!">>, _}], _}] =
 		parse("`Hello beautiful world!`"),
-	[{p, _, [{mono, _, <<"Hello">>, _}, <<" beautiful world!">>], _}] =
+	[{paragraph, _, [{inline_literal_passthrough, _, <<"Hello">>, _}, <<" beautiful world!">>], _}] =
 		parse("`Hello` beautiful world!"),
-	[{p, _, [<<"Hello ">>, {mono, _, <<"beautiful">>, _}, <<" world!">>], _}] =
+	[{paragraph, _, [<<"Hello ">>, {inline_literal_passthrough, _, <<"beautiful">>, _}, <<" world!">>], _}] =
 		parse("Hello `beautiful` world!"),
-	[{p, _, [<<"Hello beautiful ">>, {mono, _, <<"world!">>, _}], _}] =
+	[{paragraph, _, [<<"Hello beautiful ">>, {inline_literal_passthrough, _, <<"world!">>, _}], _}] =
 		parse("Hello beautiful `world!`"),
-	[{p, _, [<<"Hello beautiful ">>, {mono, _, <<"multiline world!">>, _}, <<" lol">>], _}] =
+	[{paragraph, _, [<<"Hello beautiful ">>, {inline_literal_passthrough, _, <<"multiline\nworld!">>, _}, <<" lol">>], _}] =
 		parse("Hello beautiful `multiline\nworld!` lol"),
 	%% No text formatting must occur inside backticks.
-	[{p, _, [{mono, _, <<"Hello *beautiful* world!">>, _}], _}] =
+	[{paragraph, _, [{inline_literal_passthrough, _, <<"Hello *beautiful* world!">>, _}], _}] =
 		parse("`Hello *beautiful* world!`"),
 	ok.
 
@@ -86,110 +89,110 @@ quoted_text_literal_mono(_) ->
 
 title_short(_) ->
 	doc("The trailing title delimiter is optional. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!"),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!"),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!"),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!"),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world!"),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!"),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!"),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!"),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!"),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world!"),
 	ok.
 
 title_short_no_spaces(_) ->
 	doc("One or more spaces must fall between the title and the delimiter. (11.2)"),
-	[{p, _, <<"=Hello world!">>, _}] = parse("=Hello world!"),
-	[{p, _, <<"==Hello world!">>, _}] = parse("==Hello world!"),
-	[{p, _, <<"===Hello world!">>, _}] = parse("===Hello world!"),
-	[{p, _, <<"====Hello world!">>, _}] = parse("====Hello world!"),
-	[{p, _, <<"=====Hello world!">>, _}] = parse("=====Hello world!"),
+	[{paragraph, _, <<"=Hello world!">>, _}] = parse("=Hello world!"),
+	[{paragraph, _, <<"==Hello world!">>, _}] = parse("==Hello world!"),
+	[{paragraph, _, <<"===Hello world!">>, _}] = parse("===Hello world!"),
+	[{paragraph, _, <<"====Hello world!">>, _}] = parse("====Hello world!"),
+	[{paragraph, _, <<"=====Hello world!">>, _}] = parse("=====Hello world!"),
 	ok.
 
 title_short_trim_spaces_before(_) ->
 	doc("Spaces between the title and delimiter must be ignored. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("=      Hello world!"),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("==     Hello world!"),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("===    Hello world!"),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("====   Hello world!"),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("=====  Hello world!"),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("=      Hello world!"),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("==     Hello world!"),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("===    Hello world!"),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("====   Hello world!"),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("=====  Hello world!"),
 	ok.
 
 title_short_trim_spaces_after(_) ->
 	doc("Spaces after the title must be ignored. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!     "),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!    "),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!   "),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!  "),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! "),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!     "),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!    "),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!   "),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!  "),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! "),
 	ok.
 
 title_short_trim_spaces_before_after(_) ->
 	doc("Spaces before and after the title must be ignored. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("=      Hello world!     "),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("==     Hello world!    "),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("===    Hello world!   "),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("====   Hello world!  "),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("=====  Hello world! "),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("=      Hello world!     "),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("==     Hello world!    "),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("===    Hello world!   "),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("====   Hello world!  "),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("=====  Hello world! "),
 	ok.
 
 title_short_trailer(_) ->
 	doc("The trailing title delimiter is optional. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world! ="),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world! =="),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world! ==="),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world! ===="),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! ====="),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world! ="),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world! =="),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world! ==="),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world! ===="),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! ====="),
 	ok.
 
 title_short_trailer_no_spaces(_) ->
 	doc("One or more spaces must fall between the title and the trailer. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!=">>, _}] = parse("= Hello world!="),
-	[{title, #{level := 1}, <<"Hello world!==">>, _}] = parse("== Hello world!=="),
-	[{title, #{level := 2}, <<"Hello world!===">>, _}] = parse("=== Hello world!==="),
-	[{title, #{level := 3}, <<"Hello world!====">>, _}] = parse("==== Hello world!===="),
-	[{title, #{level := 4}, <<"Hello world!=====">>, _}] = parse("===== Hello world!====="),
+	[{section_title, #{level := 0}, <<"Hello world!=">>, _}] = parse("= Hello world!="),
+	[{section_title, #{level := 1}, <<"Hello world!==">>, _}] = parse("== Hello world!=="),
+	[{section_title, #{level := 2}, <<"Hello world!===">>, _}] = parse("=== Hello world!==="),
+	[{section_title, #{level := 3}, <<"Hello world!====">>, _}] = parse("==== Hello world!===="),
+	[{section_title, #{level := 4}, <<"Hello world!=====">>, _}] = parse("===== Hello world!====="),
 	ok.
 
 title_short_trim_spaces_before_trailer(_) ->
 	doc("Spaces between the title and trailer must be ignored. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!          ="),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!        =="),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!      ==="),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!    ===="),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world!  ====="),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!          ="),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!        =="),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!      ==="),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!    ===="),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world!  ====="),
 	ok.
 
 title_short_trim_spaces_after_trailer(_) ->
 	doc("Spaces after the trailer must be ignored. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world! =         "),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world! ==       "),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world! ===     "),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world! ====   "),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! ===== "),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world! =         "),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world! ==       "),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world! ===     "),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world! ====   "),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! ===== "),
 	ok.
 
 title_short_trim_spaces_before_after_trailer(_) ->
 	doc("Spaces before and after the trailer must be ignored. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!     =     "),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!    ==    "),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!   ===   "),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!  ====  "),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! ===== "),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("= Hello world!     =     "),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("== Hello world!    ==    "),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!   ===   "),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!  ====  "),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world! ===== "),
 	ok.
 
 title_short_trim_spaces_before_after_title_trailer(_) ->
 	doc("Spaces before and after both the title and the trailer must be ignored. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world!">>, _}] = parse("=      Hello world!     =     "),
-	[{title, #{level := 1}, <<"Hello world!">>, _}] = parse("==     Hello world!    ==    "),
-	[{title, #{level := 2}, <<"Hello world!">>, _}] = parse("===    Hello world!   ===   "),
-	[{title, #{level := 3}, <<"Hello world!">>, _}] = parse("====   Hello world!  ====  "),
-	[{title, #{level := 4}, <<"Hello world!">>, _}] = parse("=====  Hello world! ===== "),
+	[{section_title, #{level := 0}, <<"Hello world!">>, _}] = parse("=      Hello world!     =     "),
+	[{section_title, #{level := 1}, <<"Hello world!">>, _}] = parse("==     Hello world!    ==    "),
+	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("===    Hello world!   ===   "),
+	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("====   Hello world!  ====  "),
+	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("=====  Hello world! ===== "),
 	ok.
 
 title_short_wrong_trailer(_) ->
 	doc("The delimiters must be the same size when a trailer is present. (11.2)"),
-	[{title, #{level := 0}, <<"Hello world! ===">>, _}] = parse("= Hello world! ==="),
-	[{title, #{level := 1}, <<"Hello world! ====">>, _}] = parse("== Hello world! ===="),
-	[{title, #{level := 2}, <<"Hello world! =====">>, _}] = parse("=== Hello world! ====="),
-	[{title, #{level := 3}, <<"Hello world! =">>, _}] = parse("==== Hello world! ="),
-	[{title, #{level := 4}, <<"Hello world! ==">>, _}] = parse("===== Hello world! =="),
+	[{section_title, #{level := 0}, <<"Hello world! ===">>, _}] = parse("= Hello world! ==="),
+	[{section_title, #{level := 1}, <<"Hello world! ====">>, _}] = parse("== Hello world! ===="),
+	[{section_title, #{level := 2}, <<"Hello world! =====">>, _}] = parse("=== Hello world! ====="),
+	[{section_title, #{level := 3}, <<"Hello world! =">>, _}] = parse("==== Hello world! ="),
+	[{section_title, #{level := 4}, <<"Hello world! ==">>, _}] = parse("===== Hello world! =="),
 	ok.
 
 %% Normal paragraphs.
@@ -198,13 +201,13 @@ title_short_wrong_trailer(_) ->
 
 paragraph(_) ->
 	doc("Normal paragraph. (15.1)"),
-	[{p, _, <<"Hello world this is a paragraph peace.">>, _}] = parse(
+	[{paragraph, _, <<"Hello world this is a paragraph peace.">>, _}] = parse(
 		"Hello world\n"
 		"this is a paragraph\n"
 		"peace.\n"),
 	[
-		{p, _, <<"Hello world this is a paragraph peace.">>, _},
-		{p, _, <<"This is another paragraph.">>, _}
+		{paragraph, _, <<"Hello world this is a paragraph peace.">>, _},
+		{paragraph, _, <<"This is another paragraph.">>, _}
 	] = parse(
 		"Hello world\n"
 		"this is a paragraph\n"
@@ -215,7 +218,7 @@ paragraph(_) ->
 
 paragraph_title(_) ->
 	doc("Paragraph preceded by a block title. (12, 15.1)"),
-	[{p, #{title := <<"Block title!">>}, <<"Hello world this is a paragraph peace.">>, _}] = parse(
+	[{paragraph, #{<<"title">> := <<"Block title!">>}, <<"Hello world this is a paragraph peace.">>, _}] = parse(
 		".Block title!\n"
 		"Hello world\n"
 		"this is a paragraph\n"
@@ -229,7 +232,7 @@ listing(_) ->
 	Source = <<
 		"init(Req, State) ->\n"
 		"    {ok, Req, State}.">>,
-	[{listing, _, Source, _}] = parse(iolist_to_binary([
+	[{listing_block, _, Source, _}] = parse(iolist_to_binary([
 		"----\n",
 		Source, "\n"
 		"----\n"])),
@@ -237,7 +240,7 @@ listing(_) ->
 
 listing_title(_) ->
 	doc("Listing block with title. (12, 16.2)"),
-	[{listing, #{title := <<"Block title!">>}, <<"1 = 2.">>, _}] = parse(
+	[{listing_block, #{<<"title">> := <<"Block title!">>}, <<"1 = 2.">>, _}] = parse(
 		".Block title!\n"
 		"----\n"
 		"1 = 2.\n"
@@ -249,7 +252,7 @@ listing_filter_source(_) ->
 	Source = <<
 		"init(Req, State) ->\n"
 		"    {ok, Req, State}.">>,
-	[{listing, #{language := <<"erlang">>}, Source, _}] = parse(iolist_to_binary([
+	[{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>}, Source, _}] = parse(iolist_to_binary([
 		"[source,erlang]\n"
 		"----\n",
 		Source, "\n"
@@ -258,13 +261,13 @@ listing_filter_source(_) ->
 
 listing_filter_source_title(_) ->
 	doc("Source code listing filter with title. (12, source-highlight-filter)"),
-	[{listing, #{language := <<"erlang">>, title := <<"Block title!">>}, <<"1 = 2.">>, _}] = parse(
+	[{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>, <<"title">> := <<"Block title!">>}, <<"1 = 2.">>, _}] = parse(
 		".Block title!\n"
 		"[source,erlang]\n"
 		"----\n"
 		"1 = 2.\n"
 		"----\n"),
-	[{listing, #{language := <<"erlang">>, title := <<"Block title!">>}, <<"1 = 2.">>, _}] = parse(
+	[{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>, <<"title">> := <<"Block title!">>}, <<"1 = 2.">>, _}] = parse(
 		"[source,erlang]\n"
 		".Block title!\n"
 		"----\n"
@@ -276,13 +279,13 @@ listing_filter_source_title(_) ->
 
 unordered_list(_) ->
 	doc("Unoredered lists. (17.1)"),
-	[{ul, _, [
-		{li, _, [{p, _, <<"Hello!">>, _}], _}
+	[{list, #{type := bulleted}, [
+		{list_item, _, [{paragraph, #{}, <<"Hello!">>, _}], _}
 	], _}] = parse("* Hello!"),
-	[{ul, _, [
-		{li, _, [{p, _, <<"Hello!">>, _}], _},
-		{li, _, [{p, _, <<"World!">>, _}], _},
-		{li, _, [{p, _, <<"Hehe.">>, _}], _}
+	[{list, #{type := bulleted}, [
+		{list_item, _, [{paragraph, #{}, <<"Hello!">>, _}], _},
+		{list_item, _, [{paragraph, #{}, <<"World!">>, _}], _},
+		{list_item, _, [{paragraph, #{}, <<"Hehe.">>, _}], _}
 	], _}] = parse(
 		"* Hello!\n"
 		"* World!\n"
@@ -300,47 +303,92 @@ unordered_list(_) ->
 
 labeled_list(_) ->
 	doc("Labeled lists. (17.3)"),
-	[{ll, _, [
-		{li, #{label := <<"The label">>}, [{p, _, <<"The value!">>, _}], _}
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"The label">>},
+			[{paragraph, #{}, <<"The value!">>, _}], _}
 	], _}] = parse("The label:: The value!"),
-	%% @todo Currently this returns two ll. This is a bug but it gives
-	%% me the result I want, or close enough, for now.
-	[{ll, _, [
-		{li, #{label := <<"The label">>}, [{p, _, <<"The value!">>, _}], _}
-	], _},
-	{ll, _, [
-		{li, #{label := <<"More labels">>}, [{p, _, <<"More values!">>, _}], _}
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"The label">>},
+			[{paragraph, #{}, <<"The value!">>, _}], _},
+		{list_item, #{label := <<"More labels">>},
+			[{paragraph, #{}, <<"More values!">>, _}], _}
 	], _}] = parse(
 		"The label:: The value!\n"
 		"More labels:: More values!\n"),
-	[{ll, _, [
-		{li, #{label := <<"The label">>}, [{p, _, <<"The value!">>, _}], _}
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"The label">>},
+			[{paragraph, #{}, <<"The value!">>, _}], _}
 	], _}] = parse(
 		"The label::\n"
 		"\n"
 		"The value!"),
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"The label">>},
+			[{paragraph, #{}, <<"The value!">>, _}], _}
+	], _}] = parse(
+		"The label::\n"
+		"    The value!"),
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"The label">>}, [
+			{paragraph, _, <<"The value!">>, _},
+			{paragraph, _, <<"With continuations!">>, _},
+			{paragraph, _, <<"OK good.">>, _}
+		], _}
+	], _}] = parse(
+		"The label::\n"
+		"\n"
+		"The value!\n"
+		"+\n"
+		"With continuations!\n"
+		"+\n"
+		"OK good."),
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"The label">>}, [
+			{paragraph, #{}, <<"The value!">>, _},
+			{list, #{type := bulleted}, [
+				{list_item, _, [{paragraph, #{}, <<"first list item">>, _}], _},
+				{list_item, _, [{paragraph, #{}, <<"second list item">>, _}], _},
+				{list_item, _, [{paragraph, #{}, <<"third list item">>, _}], _}
+			], _}
+		], _}
+	], _}] = parse(
+		"The label::\n"
+		"\n"
+		"The value!\n"
+		"+\n"
+		"    * first list item\n"
+		"    * second list\n"
+		"      item\n"
+		"    * third list\n"
+		"      item\n"
+		"\n"),
 	ok.
-
-%% @todo Very little was implemented from labeled lists. They need more work.
 
 %% Macros.
 
 rel_link(_) ->
-	doc("Relative links are built using the link:<target>[<caption>] macro. (21.1.3)"),
-	[{p, _, [
-		{rel_link, #{target := <<"downloads/cowboy-2.0.tgz">>}, <<"2.0">>, _}
+	doc("Relative links are built using the link:Target[Caption] macro. (21.1.3)"),
+	[{paragraph, _, [
+		{link, #{target := <<"downloads/cowboy-2.0.tgz">>}, <<"2.0">>, _}
 	], _}] = parse("link:downloads/cowboy-2.0.tgz[2.0]"),
-	[{p, _, [
+	[{paragraph, _, [
 		<<"Download ">>,
-		{rel_link, #{target := <<"downloads/cowboy-2.0.zip">>}, <<"Cowboy 2.0">>, _},
+		{link, #{target := <<"downloads/cowboy-2.0.zip">>}, <<"Cowboy 2.0">>, _},
 		<<" as zip">>
 	], _}] = parse("Download link:downloads/cowboy-2.0.zip[Cowboy 2.0] as zip"),
 	ok.
 
 comment_line(_) ->
 	doc("Lines starting with two slashes are treated as comments. (21.2.3)"),
-	[{comment, _, <<"This is a comment.">>, _}] = parse("// This is a comment."),
-	[{comment, _, <<"This is a comment.">>, _}] = parse("//   This is a comment.  "),
+	[{comment_line, _, <<"This is a comment.">>, _}] = parse("//This is a comment."),
+	[{comment_line, _, <<"This is a comment.">>, _}] = parse("// This is a comment."),
+	[{comment_line, _, <<"This is a comment.">>, _}] = parse("//   This is a comment.  "),
+	[
+		{comment_line, _, <<"First line.">>, _},
+		{comment_line, _, <<"Second line.">>, _}
+	] = parse(
+		"// First line.\n"
+		"// Second line.\n"),
 	ok.
 
 %% Tables. (23)
@@ -349,19 +397,19 @@ table(_) ->
 	%% @todo I think I read somewhere that paragraphs are not allowed in cells... Double check.
 	[{table, _, [
 		{row, _, [
-			{cell, _, [{p, _, <<"1">>, _}], _},
-			{cell, _, [{p, _, <<"2">>, _}], _},
-			{cell, _, [{p, _, <<"A">>, _}], _}
+			{cell, _, <<"1">>, _},
+			{cell, _, <<"2">>, _},
+			{cell, _, <<"A">>, _}
 		], _},
 		{row, _, [
-			{cell, _, [{p, _, <<"3">>, _}], _},
-			{cell, _, [{p, _, <<"4">>, _}], _},
-			{cell, _, [{p, _, <<"B">>, _}], _}
+			{cell, _, <<"3">>, _},
+			{cell, _, <<"4">>, _},
+			{cell, _, <<"B">>, _}
 		], _},
 		{row, _, [
-			{cell, _, [{p, _, <<"5">>, _}], _},
-			{cell, _, [{p, _, <<"6">>, _}], _},
-			{cell, _, [{p, _, <<"C">>, _}], _}
+			{cell, _, <<"5">>, _},
+			{cell, _, <<"6">>, _},
+			{cell, _, <<"C">>, _}
 		], _}
 	], _}]= parse(
 		"|=======\n"

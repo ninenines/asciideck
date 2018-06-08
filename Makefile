@@ -2,17 +2,22 @@
 
 PROJECT = asciideck
 PROJECT_DESCRIPTION = Asciidoc for Erlang.
-PROJECT_VERSION = 0.1.0
-
-# Options.
-
-CI_OTP ?= OTP-18.0.3 OTP-18.1.5 OTP-18.2.4.1 OTP-18.3.4.4 OTP-19.0.7 OTP-19.1.5
-CI_HIPE ?= $(lastword $(CI_OTP))
-CI_ERLLVM ?= $(CI_HIPE)
+PROJECT_VERSION = 0.2.0
 
 # Dependencies.
 
-TEST_DEPS = ct_helper
+TEST_ERLC_OPTS += +'{parse_transform, eunit_autoexport}'
+TEST_DEPS = $(if $(CI_ERLANG_MK),ci.erlang.mk) ct_helper
 dep_ct_helper = git https://github.com/ninenines/ct_helper master
+
+# CI configuration.
+
+dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
+DEP_EARLY_PLUGINS = ci.erlang.mk
+
+AUTO_CI_OTP ?= OTP-19+
+AUTO_CI_HIPE ?= OTP-LATEST
+# AUTO_CI_ERLLVM ?= OTP-LATEST
+AUTO_CI_WINDOWS ?= OTP-19+
 
 include erlang.mk

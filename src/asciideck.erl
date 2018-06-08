@@ -1,4 +1,4 @@
-%% Copyright (c) 2016, Loïc Hoguin <essen@ninenines.eu>
+%% Copyright (c) 2016-2018, Loïc Hoguin <essen@ninenines.eu>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
@@ -32,8 +32,15 @@ parse_file(Filename, St) ->
 parse(Data) ->
 	parse(Data, #{}).
 
-parse(Data, St) when is_binary(Data) ->
-	asciideck_parser:parse(Data, St);
+parse(Data, _St) when is_binary(Data) ->
+	Passes = [
+		asciideck_attributes_pass,
+		asciideck_lists_pass,
+		asciideck_tables_pass,
+		asciideck_inline_pass
+	],
+	lists:foldl(fun(M, AST) -> M:run(AST) end,
+		asciideck_block_parser:parse(Data), Passes);
 parse(Data, St) ->
 	parse(iolist_to_binary(Data), St).
 
