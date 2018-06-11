@@ -275,6 +275,16 @@ listing_filter_source_title(_) ->
 		"----\n"),
 	ok.
 
+paragraph_filter_source(_) ->
+	doc("Source code listing filter as a paragraph. (source-highlight-filter)"),
+	Source = <<
+		"init(Req, State) ->\n"
+		"    {ok, Req, State}.">>,
+	[{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>}, Source, _}] = parse(iolist_to_binary([
+		"[source,erlang]\n",
+		Source, "\n"])),
+	ok.
+
 %% Bulleted lists.
 
 unordered_list(_) ->

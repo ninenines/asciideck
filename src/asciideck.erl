@@ -46,6 +46,7 @@ parse(Data) ->
 parse(Data, _St) ->
 	Passes = [
 		asciideck_attributes_pass,
+		asciideck_transform_pass,
 		asciideck_lists_pass,
 		asciideck_tables_pass,
 		asciideck_inline_pass

@@ -12,8 +12,6 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-%% @todo https://www.gnu.org/software/src-highlite/source-highlight.html
-
 -module(asciideck_to_html).
 
 -export([translate/2]).
@@ -96,7 +94,13 @@ paragraph({paragraph, _, Text, _}) ->
 
 %% Listing blocks.
 
-listing_block({listing_block, Attrs, Listing, _}) ->
+listing_block({listing_block, Attrs, Listing0, _}) ->
+	Listing = case Attrs of
+		#{1 := <<"source">>, 2 := _} ->
+			try asciideck_source_highlight:filter(Listing0, Attrs) catch C:E -> io:format("~p ~p ~p~n", [C, E, erlang:get_stacktrace()]), exit(bad) end;
+		_ ->
+			["<pre>", html_encode(Listing0), "</pre>"]
+	end,
 	[
 		"<div class=\"listingblock\">",
 		case Attrs of
@@ -105,9 +109,9 @@ listing_block({listing_block, Attrs, Listing, _}) ->
 			_ ->
 				[]
 		end,
-		"<div class=\"content\"><pre>",
-		html_encode(Listing),
-		"</pre></div></div>\n"
+		"<div class=\"content\">",
+		Listing,
+		"</div></div>\n"
 	].
 
 %% Lists.
