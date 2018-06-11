@@ -90,6 +90,6 @@ fi
 <&0 erl +A0 -boot no_dot_erlang -noshell -pz `dirname $0`/../ebin -eval " \
 	case asciideck:to_html($PARSE_CALL, $TRANSLATE_OPTS) of \
 		ok -> ok; \
-		Output -> io:format(\"~s~n\", [Output]) \
+		Output -> io:format(\"~ts~n\", [Output]) \
 	end, \
 	halt()"
