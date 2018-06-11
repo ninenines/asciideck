@@ -71,21 +71,42 @@ ast_node(Node={Type, _, _, _}) ->
 			listing_block -> listing_block(Node);
 			list -> list(Node);
 			table -> table(Node);
+			block_macro -> block_macro(Node);
 			comment_line -> comment_line(Node);
-			_ ->
-				io:format("Ignored AST node ~p~n", [Node]),
-				[]
+			_ -> ast_error({unknown_type, Node})
 		end
-	catch _:_ ->
-		io:format("Ignored AST node ~p~n", [Node]),
-		[]
+	catch C:E ->
+		ast_error({crash, C, E, erlang:get_stacktrace(), Node})
 	end.
+
+ast_error(Error) ->
+	[
+		"<p class=\"asciideck-error\">",
+		html_encode(unicode:characters_to_binary(io_lib:format("~p", [Error]))),
+		"</p>"
+	].
 
 %% Section titles.
 
-section_title({section_title, #{level := Level}, Title, _}) ->
+section_title({section_title, Attrs=#{level := Level}, Title, _}) ->
 	LevelC = $1 + Level,
-	["<h", LevelC, ">", inline(Title), "</h", LevelC, ">\n"].
+	ID = case Attrs of
+		#{<<"id">> := ID0} -> ID0;
+		_ -> id_from_title(Title)
+	end,
+	["<h", LevelC, " id=\"", ID, "\">", inline(Title), "</h", LevelC, ">\n"].
+
+%% Asciidoc User Guide 8.4.2
+%% @todo Handle cases where the title is repeated in the same document.
+id_from_title(Title) ->
+	ID0 = unicode:characters_to_binary(string:to_lower(unicode:characters_to_list(Title))),
+	ID1 = <<if
+		C >= $a, C =< $z -> <<C/utf8>>;
+		C >= $0, C =< $9 -> <<C/utf8>>;
+		true -> <<$_>>
+	end || <<C/utf8>> <= ID0>>,
+	ID = string:strip(unicode:characters_to_list(ID1), both, $_),
+	[$_, unicode:characters_to_binary(ID)].
 
 %% Paragraphs.
 
@@ -129,11 +150,10 @@ bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 		"</li>\n"
 	].
 
-labeled_list_item({list_item, #{label := Label}, [{paragraph, _, Text, _}|AST], _}) ->
+labeled_list_item({list_item, #{label := Label}, AST, _}) ->
 	[
 		"<dt>", inline(Label), "</dt>\n",
 		"<dd>",
-		inline(Text), "\n",
 		ast(AST),
 		"</dd>\n"
 	].
@@ -160,6 +180,13 @@ table_body_cells(Cells) ->
 	[["<td>", inline(Text), "</td>\n"]
 		|| {cell, _, Text, _} <- Cells].
 
+%% Block macros.
+
+block_macro({block_macro, #{name := <<"image">>,
+		target := Target, 1 := Caption}, _, _}) ->
+	["<img src=\"", html_encode(Target), "\" "
+		"alt=\"", html_encode(Caption), "\"/>"].
+
 %% Comment lines are printed in the generated file
 %% but are not visible in viewers.
 
@@ -170,9 +197,10 @@ comment_line({comment_line, _, Text, _}) ->
 
 inline(Text) when is_binary(Text) ->
 	html_encode(Text);
-inline({Link, #{target := Target}, Text, _})
-		when Link =:= link; Link =:= xref ->
+inline({link, #{target := Target}, Text, _}) ->
 	["<a href=\"", html_encode(Target), "\">", html_encode(Text), "</a>"];
+inline({xref, #{id := ID}, Text, _}) ->
+	["<a href=\"#", html_encode(ID), "\">", html_encode(Text), "</a>"];
 inline({emphasized, _, Text, _}) ->
 	["<em>", inline(Text), "</em>"];
 inline({strong, _, Text, _}) ->
@@ -187,5 +215,7 @@ html_encode(Text) ->
 		$& -> <<"&amp;">>;
 		$< -> <<"&lt;">>;
 		$> -> <<"&gt;">>;
-		_ -> <<C>>
-	end || <<C>> <= Text>>.
+		$" -> <<"&quot;">>;
+		$' -> <<"&apos;">>;
+		_ -> <<C/utf8>>
+	end || <<C/utf8>> <= Text>>.

@@ -170,7 +170,10 @@ direct_link(Data, Prefix) ->
 	{Target0, Rest0} = while(fun(C) ->
 		(C =/= $[) andalso (C =/= $\s) andalso (C =/= $\t)
 			andalso (C =/= $\r) andalso (C =/= $\n)
+			andalso (C =/= $,)
 	end, Data),
+	%% The link must be more than just the prefix.
+	false = Target0 =:= <<>>,
 	Target = <<Prefix/binary, Target0/binary>>,
 	%% It is optionally followed by a caption. Otherwise
 	%% the link itself is the caption.
@@ -191,6 +194,13 @@ direct_link(Data, Prefix) ->
 
 -ifdef(TEST).
 http_link_test() ->
+	<<"Incomplete http: link">> = inline(<<"Incomplete http: link">>),
+	[
+		{link, #{
+			target := <<"http://example.org:8080">>
+		}, <<"http://example.org:8080">>, _},
+		<<", continued">>
+	] = inline(<<"http://example.org:8080, continued">>),
 	[
 		<<"If you have ">>,
 		{link, #{
@@ -221,6 +231,13 @@ https_link(<<"https:", Rest/bits>>, Prev) when ?IS_BOUNDARY(Prev) ->
 
 -ifdef(TEST).
 https_link_test() ->
+	<<"Incomplete https: link">> = inline(<<"Incomplete https: link">>),
+	[
+		{link, #{
+			target := <<"https://example.org:8080">>
+		}, <<"https://example.org:8080">>, _},
+		<<", continued">>
+	] = inline(<<"https://example.org:8080, continued">>),
 	[
 		<<"If you have ">>,
 		{link, #{

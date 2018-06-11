@@ -1018,12 +1018,13 @@ para(St) ->
 
 fold_para(eof) ->
 	done;
-fold_para(Line0) ->
-	case trim(Line0) of
+fold_para(Line) ->
+	case trim(Line) of
 		<<>> -> done;
 		<<"+">> -> done;
+		<<"//", _/bits>> -> done;
 		%% @todo Detect delimited block or list.
-		Line -> {more, Line}
+		_ -> {more, Line}
 	end.
 
 -ifdef(TEST).
@@ -1042,6 +1043,12 @@ para_test() ->
 	[{paragraph, _, LoremIpsum, _}] = parse(<< LoremIpsum/binary, "\n">>),
 	%% Paragraph followed by end of file with no trailing line break..
 	[{paragraph, _, LoremIpsum, _}] = parse(LoremIpsum),
+	%% Paragraph followed by list continuation.
+	[{paragraph, _, LoremIpsum, _}, {list_item_continuation, _, _, _}]
+		= parse(<<LoremIpsum/binary, "\n+">>),
+	%% Paragraph followed by comment.
+	[{paragraph, _, LoremIpsum, _}, {comment_line, _, <<"@todo Double check.">>, _}]
+		= parse(<<LoremIpsum/binary, "\n// @todo Double check.">>),
 	%% Two paragraphs.
 	[{paragraph, _, LoremIpsum, _}, {paragraph, _, LoremIpsum, _}]
 		= parse(<<
