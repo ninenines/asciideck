@@ -1,4 +1,4 @@
-%% Copyright (c) 2017-2018, Loïc Hoguin <essen@ninenines.eu>
+%% Copyright (c) 2018, Loïc Hoguin <essen@ninenines.eu>
 %%
 %% Permission to use, copy, modify, and/or distribute this software for any
 %% purpose with or without fee is hereby granted, provided that the above
@@ -12,11 +12,11 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
--module(asciideck_line_reader).
+-module(asciideck_stdin_reader).
 -behaviour(gen_server).
 
 %% The API is defined in asciideck_reader.
--export([start_link/1]).
+-export([start_link/0]).
 
 %% gen_server.
 -export([init/1]).
@@ -27,36 +27,33 @@
 -export([code_change/3]).
 
 -record(state, {
-	lines :: [binary()],
-	length :: non_neg_integer(),
+	lines = [] :: [binary()],
 	pos = 1 :: non_neg_integer()
 }).
 
 %% API.
 
--spec start_link(binary()) -> {ok, pid()}.
-start_link(Data) ->
-	gen_server:start_link(?MODULE, [Data], []).
+-spec start_link() -> {ok, pid()}.
+start_link() ->
+	gen_server:start_link(?MODULE, [], []).
 
 %% gen_server.
 
-init([Data]) ->
-	Lines0 = binary:split(Data, <<"\n">>, [global]),
-	%% We add an empty line at the end to simplify parsing.
-	%% This has the inconvenient that when parsing blocks
-	%% this empty line will be included in the result if
-	%% the block is not properly closed.
-	Lines = lists:append(Lines0, [<<>>]),
-	{ok, #state{lines=Lines, length=length(Lines)}}.
+init([]) ->
+	{ok, #state{}}.
 
-handle_call(read_line, _From, State=#state{length=Length, pos=Pos})
-		when Pos > Length ->
-	{reply, eof, State};
-%% @todo I know this isn't the most efficient. We could keep
-%% the lines read separately and roll back when set_position
-%% wants us to. But it works fine for now.
+handle_call(read_line, _From, State=#state{lines=Lines, pos=Pos})
+		when length(Lines) >= Pos ->
+	{reply, lists:nth(Pos, lists:reverse(Lines)), State#state{pos=Pos + 1}};
 handle_call(read_line, _From, State=#state{lines=Lines, pos=Pos}) ->
-	{reply, lists:nth(Pos, Lines), State#state{pos=Pos + 1}};
+	case io:get_line('') of
+		eof ->
+			{reply, eof, State};
+		Line0 ->
+			Line1 = string:strip(Line0, right, $\n),
+			Line = unicode:characters_to_binary(Line1),
+			{reply, Line, State#state{lines=[Line|Lines], pos=Pos + 1}}
+	end;
 handle_call(get_position, _From, State=#state{pos=Pos}) ->
 	{reply, Pos, State};
 handle_call(_Request, _From, State) ->

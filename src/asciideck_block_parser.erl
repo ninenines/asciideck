@@ -51,11 +51,15 @@ define_NOT_test() ->
 	ok.
 -endif.
 
--spec parse(binary()) -> ast().
-parse(Data) ->
+-spec parse(binary() | pid()) -> ast().
+parse(Data) when is_binary(Data) ->
 	%% @todo Might want to start it supervised.
 	%% @todo Might want to stop it also.
 	{ok, ReaderPid} = asciideck_line_reader:start_link(Data),
+	parse(ReaderPid);
+parse(Data) when is_list(Data) ->
+	parse(iolist_to_binary(Data));
+parse(ReaderPid) when is_pid(ReaderPid) ->
 	blocks(#state{reader=ReaderPid}).
 
 blocks(St) ->
@@ -1049,37 +1053,37 @@ para_test() ->
 
 %% Control functions.
 
-oneof([], St) ->
-	throw({error, St}); %% @todo
+oneof([], St=#state{reader=ReaderPid}) ->
+	throw({error, St, sys:get_state(ReaderPid)});
 oneof([Parse|Tail], St=#state{reader=ReaderPid}) ->
-	Ln = asciideck_line_reader:get_position(ReaderPid),
+	Ln = asciideck_reader:get_position(ReaderPid),
 	try
 		Parse(St)
 	catch _:_ ->
-		asciideck_line_reader:set_position(ReaderPid, Ln),
+		asciideck_reader:set_position(ReaderPid, Ln),
 		oneof(Tail, St)
 	end.
 
 skip(Parse, St=#state{reader=ReaderPid}) ->
-	Ln = asciideck_line_reader:get_position(ReaderPid),
+	Ln = asciideck_reader:get_position(ReaderPid),
 	try
 		_ = Parse(St),
 		skip(Parse, St)
 	catch _:_ ->
-		asciideck_line_reader:set_position(ReaderPid, Ln),
+		asciideck_reader:set_position(ReaderPid, Ln),
 		ok
 	end.
 
 %% Line functions.
 
 read_line(#state{reader=ReaderPid}) ->
-	asciideck_line_reader:read_line(ReaderPid).
+	asciideck_reader:read_line(ReaderPid).
 
 read_while(St=#state{reader=ReaderPid}, F, Acc) ->
-	Ln = asciideck_line_reader:get_position(ReaderPid),
+	Ln = asciideck_reader:get_position(ReaderPid),
 	case F(read_line(St)) of
 		done ->
-			asciideck_line_reader:set_position(ReaderPid, Ln),
+			asciideck_reader:set_position(ReaderPid, Ln),
 			Acc;
 		{more, Line} ->
 			case Acc of
@@ -1089,7 +1093,7 @@ read_while(St=#state{reader=ReaderPid}, F, Acc) ->
 	end.
 
 ann(#state{reader=ReaderPid}) ->
-	#{line => asciideck_line_reader:get_position(ReaderPid)}.
+	#{line => asciideck_reader:get_position(ReaderPid)}.
 
 trim(Line) ->
 	trim(Line, both).
