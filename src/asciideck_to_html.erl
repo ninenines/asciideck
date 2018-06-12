@@ -18,7 +18,7 @@
 
 translate(AST, Opts) ->
 	Output0 = ast(AST),
-	Output1 = header_footer(Output0, Opts),
+	Output1 = maybe_header_footer(Output0, Opts),
 	{CompressExt, Output} = case Opts of
 		#{compress := gzip} -> {".gz", zlib:gzip(Output1)};
 		_ -> {"", Output1}
@@ -35,7 +35,9 @@ translate(AST, Opts) ->
 			Output
 	end.
 
-header_footer(Body, _Opts) ->
+maybe_header_footer(Body, #{no_header_footer := _}) ->
+	Body;
+maybe_header_footer(Body, _Opts) ->
 	[
 		"<!DOCTYPE html>\n"
 		"<html lang=\"en\">\n"

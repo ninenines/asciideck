@@ -3,6 +3,8 @@
 set -e
 #set -x
 
+ARGUMENTS="$@"
+
 TEMP=$(getopt -o 'a:b:d:hso:nv' -l 'attribute:,backend:,doctype:,help,no-header-footer,out-file:,section-numbers,safe,theme:,verbose,version' -n asciidoc -- "$@")
 
 if [ $? -ne 0 ]; then
@@ -12,7 +14,7 @@ fi
 eval set -- "$TEMP"
 unset TEMP
 
-NO_HEADER_FOOTER=0
+NO_HEADER_FOOTER=
 OUT_DIR=
 OUT_FILE=
 SAFE=0
@@ -81,11 +83,16 @@ if [ $IN_FILE -a -z $OUT_FILE ]; then
 	OUT_FILE=`basename ${IN_FILE%.*}`
 fi
 
+# We need a dummy variable to not have to worry about commas
+# so let's pass the original command line forward.
+TRANSLATE_OPTS="#{ command_line => \"$0 $ARGUMENTS\""
 if [ $OUT_FILE ]; then
-	TRANSLATE_OPTS="#{outdir => \"$OUT_DIR\", outfile => \"$OUT_FILE\"}"
-else
-	TRANSLATE_OPTS="#{}"
+	TRANSLATE_OPTS="$TRANSLATE_OPTS, outdir => \"$OUT_DIR\", outfile => \"$OUT_FILE\""
 fi
+if [ $NO_HEADER_FOOTER ]; then
+	TRANSLATE_OPTS="$TRANSLATE_OPTS, no_header_footer => true"
+fi
+TRANSLATE_OPTS="$TRANSLATE_OPTS }"
 
 <&0 erl +A0 -boot no_dot_erlang -noshell -pz `dirname $0`/../ebin -eval " \
 	case asciideck:to_html($PARSE_CALL, $TRANSLATE_OPTS) of \
