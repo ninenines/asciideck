@@ -223,6 +223,8 @@ inline({strong, _, Text, _}) ->
 	["<strong>", inline(Text), "</strong>"];
 inline({inline_literal_passthrough, _, Text, _}) ->
 	["<code>", inline(Text), "</code>"];
+inline({line_break, _, _, _}) ->
+	"<br/>";
 inline(Text) when is_list(Text) ->
 	[inline(T) || T <- Text].
 

@@ -68,7 +68,9 @@ inline(Data, BinAcc, Acc) ->
 		fun emphasized_underline/2,
 		fun strong/2,
 		%% Passthrough macros.
-		fun inline_literal_passthrough/2
+		fun inline_literal_passthrough/2,
+		%% Line breaks.
+		fun line_break/2
 	]).
 
 %% The inline pass replaces \r\n and \n with a simple space
@@ -323,3 +325,10 @@ inline_literal_passthrough_test() ->
 	] = inline(<<"Word phrases `enclosed in backtick characters` (grave accents)...">>),
 	ok.
 -endif.
+
+-define(IS_WS(C), (C =:= $\s) or (C =:= $\t)).
+
+%% Asciidoc User Guide 10.3
+line_break(<<C, "+", Rest0/bits>>, _) when ?IS_WS(C) ->
+	%% @todo Rest0 until \r or \n is whitespace.
+	{ok, {line_break, #{}, <<>>, inline}, Rest0}.
