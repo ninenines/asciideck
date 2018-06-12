@@ -71,6 +71,7 @@ ast_node(Node={Type, _, _, _}) ->
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
 			listing_block -> listing_block(Node);
+			passthrough_block -> passthrough_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);
@@ -136,6 +137,11 @@ listing_block({listing_block, Attrs, Listing0, _}) ->
 		Listing,
 		"</div></div>\n"
 	].
+
+%% Passthrough blocks.
+
+passthrough_block({passthrough_block, _, HTML, _}) ->
+	HTML.
 
 %% Lists.
 
