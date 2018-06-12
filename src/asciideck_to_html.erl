@@ -160,9 +160,14 @@ labeled_list_item({list_item, #{label := Label}, AST, _}) ->
 
 %% Tables.
 
-table({table, _, [{row, _, Head, _}|Rows], _}) ->
+table({table, Attrs, [{row, _, Head, _}|Rows], _}) ->
 	[
-		"<table rules=\"all\" width=\"100%\" frame=\"border\" cellspacing=\"0\" cellpadding=\"4\">\n"
+		"<table rules=\"all\" width=\"100%\" frame=\"border\"
+			cellspacing=\"0\" cellpadding=\"4\">\n",
+		case Attrs of
+			#{<<"title">> := Caption} -> ["<caption>", inline(Caption), "</caption>"];
+			_ -> []
+		end,
 		"<thead><tr>", table_head(Head), "</tr></thead>"
 		"<tbody>", table_body(Rows), "</tbody>"
 		"</table>\n"

@@ -81,10 +81,139 @@ parse_table(Contents, _) ->
 			{Cells, length(Cells0)}
 	end.
 
+%% @todo Don't discard Specs.
 num_cols(Cols) ->
-	%% @todo Handle column specifiers.
-	Specs = binary:split(Cols, <<$,>>, [global]),
-	length(Specs).
+	try binary_to_integer(Cols) of
+		Int -> Int
+	catch _:_ ->
+		Specs0 = binary:split(Cols, <<$,>>, [global]),
+		Specs = [parse_specs(Spec) || Spec <- Specs0],
+		lists:sum([M || #{multiplier := M} <- Specs])
+	end.
+
+-ifdef(TEST).
+num_cols_test_() ->
+	Tests = [
+		{<<"4">>, 4},
+		{<<">s,^m,e">>, 3},
+		{<<"3,^2,^2,10">>, 4},
+		{<<"^1,4*2">>, 5},
+		{<<"e,m,^,>s">>, 4},
+		{<<"2<d,2*,4d,>">>, 5},
+		{<<"4*<">>, 4},
+		{<<"3*.^">>, 3},
+		{<<"2*,.>">>, 3},
+		{<<".<,.^,.>">>, 3},
+		{<<".<,.^,^.>">>, 3}
+	],
+	[{V, fun() -> R = num_cols(V) end} || {V, R} <- Tests].
+-endif.
+
+%% Asciidoc User Guide 23.4
+%%
+%% [<multiplier>*][<horizontal>][.<vertical>][<width>][<style>]
+parse_specs(Bin0) ->
+	{ok, Bin1, Spec1} = parse_specs_multiplier(Bin0, #{}),
+	%% Width and alignment positions may be switched.
+	{ok, Bin4, Spec4} = case Bin1 of
+		<<C, _/bits>> when C >= $0, C =< $9 ->
+			{ok, Bin2, Spec2} = parse_specs_width(Bin1, Spec1),
+			{ok, Bin3, Spec3} = parse_specs_horizontal(Bin2, Spec2),
+			parse_specs_vertical(Bin3, Spec3);
+		_ ->
+			{ok, Bin2, Spec2} = parse_specs_horizontal(Bin1, Spec1),
+			{ok, Bin3, Spec3} = parse_specs_vertical(Bin2, Spec2),
+			parse_specs_width(Bin3, Spec3)
+	end,
+	parse_specs_style(Bin4, Spec4).
+
+parse_specs_multiplier(Bin, Spec) ->
+	case binary:split(Bin, <<"*">>) of
+		[_] ->
+			{ok, Bin, Spec#{multiplier => 1}};
+		[Multiplier, Rest] ->
+			{ok, Rest, Spec#{multiplier => binary_to_integer(Multiplier)}}
+	end.
+
+parse_specs_horizontal(Bin, Spec) ->
+	case Bin of
+		<<"<", Rest/bits>> -> {ok, Rest, Spec#{horizontal => left}};
+		<<"^", Rest/bits>> -> {ok, Rest, Spec#{horizontal => center}};
+		<<">", Rest/bits>> -> {ok, Rest, Spec#{horizontal => right}};
+		_ -> {ok, Bin, Spec#{horizontal => left}}
+	end.
+
+parse_specs_vertical(Bin, Spec) ->
+	case Bin of
+		<<".<", Rest/bits>> -> {ok, Rest, Spec#{vertical => top}};
+		<<".^", Rest/bits>> -> {ok, Rest, Spec#{vertical => middle}};
+		<<".>", Rest/bits>> -> {ok, Rest, Spec#{vertical => bottom}};
+		_ -> {ok, Bin, Spec#{vertical => top}}
+	end.
+
+parse_specs_width(Bin, Spec) ->
+	case binary:split(Bin, <<"%">>) of
+		[_] ->
+			case binary_take_while_integer(Bin, <<>>) of
+				{<<>>, _} ->
+					{ok, Bin, Spec#{width => 1, width_unit => proportional}};
+				{Width, Rest} ->
+					{ok, Rest, Spec#{width => binary_to_integer(Width), width_unit => proportional}}
+			end;
+		[Percent, Rest] ->
+			{ok, Rest, Spec#{width => binary_to_integer(Percent), width_unit => percent}}
+	end.
+
+binary_take_while_integer(<<C, R/bits>>, Acc) when C >= $0, C =< $9 ->
+	binary_take_while_integer(R, <<Acc/binary, C>>);
+binary_take_while_integer(Rest, Acc) ->
+	{Acc, Rest}.
+
+parse_specs_style(<<>>, Spec) ->
+	Spec#{style => default};
+parse_specs_style(Bin, Spec) ->
+	Style = parse_specs_match_style(Bin, [
+		<<"default">>, <<"emphasis">>, <<"monospaced">>, <<"strong">>,
+		<<"header">>, <<"literal">>, <<"verse">>
+	]),
+	Spec#{style => Style}.
+
+parse_specs_match_style(Prefix, [Style|Tail]) ->
+	case binary:longest_common_prefix([Prefix, Style]) of
+		0 -> parse_specs_match_style(Prefix, Tail);
+		_ -> binary_to_atom(Style, latin1)
+	end.
+
+-ifdef(TEST).
+parse_specs_test_() ->
+	Res = fun(Override) ->
+		maps:merge(#{
+			multiplier => 1,
+			horizontal => left,
+			vertical => top,
+			width => 1,
+			width_unit => proportional,
+			style => default
+		}, Override)
+	end,
+	Tests = [
+		{<<"3">>, Res(#{width => 3})},
+		{<<"10">>, Res(#{width => 10})},
+		{<<">s">>, Res(#{horizontal => right, style => strong})},
+		{<<"^m">>, Res(#{horizontal => center, style => monospaced})},
+		{<<"e">>, Res(#{style => emphasis})},
+		{<<"^2">>, Res(#{horizontal => center, width => 2})},
+		{<<"4*2">>, Res(#{multiplier => 4, width => 2})},
+		{<<"^">>, Res(#{horizontal => center})},
+		{<<">">>, Res(#{horizontal => right})},
+		{<<"2<h">>, Res(#{width => 2, horizontal => left, style => header})},
+		{<<"2*">>, Res(#{multiplier => 2})},
+		{<<"4*<">>, Res(#{multiplier => 4, horizontal => left})},
+		{<<"3*.^">>, Res(#{multiplier => 3, vertical => middle})},
+		{<<".>">>, Res(#{vertical => bottom})}
+	],
+	[{V, fun() -> R = parse_specs(V) end} || {V, R} <- Tests].
+-endif.
 
 parse_cells(Contents, Acc) ->
 	Cells = split_cells(Contents),%binary:split(Contents, [<<$|>>], [global]),
