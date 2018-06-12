@@ -404,22 +404,21 @@ comment_line(_) ->
 %% Tables. (23)
 
 table(_) ->
-	%% @todo I think I read somewhere that paragraphs are not allowed in cells... Double check.
 	[{table, _, [
 		{row, _, [
-			{cell, _, <<"1">>, _},
-			{cell, _, <<"2">>, _},
-			{cell, _, <<"A">>, _}
+			{cell, _, [{paragraph, _, <<"1">>, _}], _},
+			{cell, _, [{paragraph, _, <<"2">>, _}], _},
+			{cell, _, [{paragraph, _, <<"A">>, _}], _}
 		], _},
 		{row, _, [
-			{cell, _, <<"3">>, _},
-			{cell, _, <<"4">>, _},
-			{cell, _, <<"B">>, _}
+			{cell, _, [{paragraph, _, <<"3">>, _}], _},
+			{cell, _, [{paragraph, _, <<"4">>, _}], _},
+			{cell, _, [{paragraph, _, <<"B">>, _}], _}
 		], _},
 		{row, _, [
-			{cell, _, <<"5">>, _},
-			{cell, _, <<"6">>, _},
-			{cell, _, <<"C">>, _}
+			{cell, _, [{paragraph, _, <<"5">>, _}], _},
+			{cell, _, [{paragraph, _, <<"6">>, _}], _},
+			{cell, _, [{paragraph, _, <<"C">>, _}], _}
 		], _}
 	], _}]= parse(
 		"|=======\n"

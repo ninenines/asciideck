@@ -169,16 +169,25 @@ table({table, _, [{row, _, Head, _}|Rows], _}) ->
 	].
 
 table_head(Cells) ->
-	[["<th>", inline(Text), "</th>\n"]
-		|| {cell, _, Text, _} <- Cells].
+	[["<th>", table_cell(AST), "</th>\n"]
+		|| {cell, _, AST, _} <- Cells].
 
 table_body(Rows) ->
 	[["<tr>", table_body_cells(Cells), "</tr>\n"]
 		|| {row, _, Cells, _} <- Rows].
 
 table_body_cells(Cells) ->
-	[["<td>", inline(Text), "</td>\n"]
-		|| {cell, _, Text, _} <- Cells].
+	[["<td>", table_cell(AST), "</td>\n"]
+		|| {cell, _, AST, _} <- Cells].
+
+table_cell(AST0) ->
+	AST = [Node || Node={Type, _, _, _} <- AST0, Type =/= comment_line],
+	case AST of
+		[{paragraph, _, Text, _}] ->
+			inline(Text);
+		_ ->
+			ast(AST)
+	end.
 
 %% Block macros.
 

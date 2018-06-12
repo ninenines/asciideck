@@ -40,19 +40,19 @@ table({table, Attrs, Contents, Ann}) ->
 table_test() ->
 	{table, _, [
 		{row, _, [
-			{cell, _, <<"1">>, _},
-			{cell, _, <<"2">>, _},
-			{cell, _, <<"A">>, _}
+			{cell, _, [{paragraph, _, <<"1">>, _}], _},
+			{cell, _, [{paragraph, _, <<"2">>, _}], _},
+			{cell, _, [{paragraph, _, <<"A">>, _}], _}
 		], _},
 		{row, _, [
-			{cell, _, <<"3">>, _},
-			{cell, _, <<"4">>, _},
-			{cell, _, <<"B">>, _}
+			{cell, _, [{paragraph, _, <<"3">>, _}], _},
+			{cell, _, [{paragraph, _, <<"4">>, _}], _},
+			{cell, _, [{paragraph, _, <<"B">>, _}], _}
 		], _},
 		{row, _, [
-			{cell, _, <<"5">>, _},
-			{cell, _, <<"6">>, _},
-			{cell, _, <<"C">>, _}
+			{cell, _, [{paragraph, _, <<"5">>, _}], _},
+			{cell, _, [{paragraph, _, <<"6">>, _}], _},
+			{cell, _, [{paragraph, _, <<"C">>, _}], _}
 		], _}
 	], _} = table({table, #{}, <<
 		"|1 |2 |A\n"
@@ -112,7 +112,7 @@ do_parse_cells([Contents], Acc) ->
 	lists:reverse([{cell, #{specifiers => <<>>}, Contents, #{}}|Acc]);
 %% Last cell. There are no further cell specifiers.
 do_parse_cells([Specs, Contents0], Acc) ->
-	Contents = asciideck_block_parser:trim(Contents0, both),
+	Contents = asciideck_block_parser:parse(Contents0),
 	%% @todo Annotations.
 	Cell = {cell, #{specifiers => Specs}, Contents, #{}},
 	lists:reverse([Cell|Acc]);
@@ -123,7 +123,7 @@ do_parse_cells([Specs, Contents0|Tail], Acc) ->
 	NextSpecs = <<>>, %% @todo find_r(Contents0, <<>>),
 	Len = byte_size(Contents0) - byte_size(NextSpecs),
 	<<Contents1:Len/binary, _/bits>> = Contents0,
-	Contents = asciideck_block_parser:trim(Contents1, both),
+	Contents = asciideck_block_parser:parse(Contents1),
 	%% @todo Annotations.
 	Cell = {cell, #{specifiers => Specs}, Contents, #{}},
 	do_parse_cells([NextSpecs|Tail], [Cell|Acc]).
@@ -141,15 +141,15 @@ do_parse_cells([Specs, Contents0|Tail], Acc) ->
 -ifdef(TEST).
 parse_table_test() ->
 	{[
-		{cell, _, <<"1">>, _},
-		{cell, _, <<"2">>, _},
-		{cell, _, <<"A">>, _},
-		{cell, _, <<"3">>, _},
-		{cell, _, <<"4">>, _},
-		{cell, _, <<"B">>, _},
-		{cell, _, <<"5">>, _},
-		{cell, _, <<"6">>, _},
-		{cell, _, <<"C">>, _}
+		{cell, _, [{paragraph, _, <<"1">>, _}], _},
+		{cell, _, [{paragraph, _, <<"2">>, _}], _},
+		{cell, _, [{paragraph, _, <<"A">>, _}], _},
+		{cell, _, [{paragraph, _, <<"3">>, _}], _},
+		{cell, _, [{paragraph, _, <<"4">>, _}], _},
+		{cell, _, [{paragraph, _, <<"B">>, _}], _},
+		{cell, _, [{paragraph, _, <<"5">>, _}], _},
+		{cell, _, [{paragraph, _, <<"6">>, _}], _},
+		{cell, _, [{paragraph, _, <<"C">>, _}], _}
 	], 3} = parse_table(<<
 		"|1 |2 |A\n"
 		"|3 |4 |B\n"
@@ -158,10 +158,10 @@ parse_table_test() ->
 
 parse_table_escape_pipe_test() ->
 	{[
-		{cell, _, <<"1">>, _},
-		{cell, _, <<"2">>, _},
-		{cell, _, <<"3 |4">>, _},
-		{cell, _, <<"5">>, _}
+		{cell, _, [{paragraph, _, <<"1">>, _}], _},
+		{cell, _, [{paragraph, _, <<"2">>, _}], _},
+		{cell, _, [{paragraph, _, <<"3 |4">>, _}], _},
+		{cell, _, [{paragraph, _, <<"5">>, _}], _}
 	], 2} = parse_table(<<
 		"|1 |2\n"
 		"|3 \\|4 |5">>, #{}),
