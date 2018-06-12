@@ -23,5 +23,5 @@ filter(Input, #{2 := Lang}) ->
 	Output = os:cmd(io_lib:format(
 		"source-highlight -i ~s -s ~s",
 		[TmpFile, Lang])),
-	file:delete(TmpFile),
+	_ = file:delete(TmpFile),
 	unicode:characters_to_binary(Output).
