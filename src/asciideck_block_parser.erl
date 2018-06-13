@@ -805,7 +805,7 @@ comment_block_test() ->
 
 %% Asciidoc User Guide 16.6
 passthrough_block(St) ->
-	delimited_block(St, passthrough_block, $+).
+	delimited_block(St, passthrough_block, $+, #{<<"subs">> => <<"verbatim">>}).
 
 -ifdef(TEST).
 passthrough_block_test() ->
