@@ -63,6 +63,7 @@ inline(Data, BinAcc, Acc) ->
 		fun link/2,
 		fun http_link/2,
 		fun https_link/2,
+		fun mailto_link/2,
 		%% Quoted text.
 		fun emphasized_single_quote/2,
 		fun emphasized_underline/2,
@@ -163,7 +164,7 @@ link_test() ->
 	ok.
 -endif.
 
-%% Asciidoc User Guide 21.1.3
+%% Asciidoc User Guide 21.1.1
 http_link(<<"http:", Rest/bits>>, Prev) when ?IS_BOUNDARY(Prev) ->
 	direct_link(Rest, <<"http:">>).
 
@@ -185,9 +186,16 @@ direct_link(Data, Prefix) ->
 				C =/= $]
 			end, Caption0),
 			Caption = trim(Caption1),
-			{ok, {link, #{
-				target => Target
-			}, Caption, inline}, Rest};
+			case Caption of
+				<<>> ->
+					{ok, {link, #{
+						target => Target
+					}, Target, inline}, Rest};
+				_ ->
+					{ok, {link, #{
+						target => Target
+					}, Caption, inline}, Rest}
+			end;
 		_ ->
 			{ok, {link, #{
 				target => Target
@@ -227,7 +235,7 @@ http_link_test() ->
 	ok.
 -endif.
 
-%% Asciidoc User Guide 21.1.3
+%% Asciidoc User Guide 21.1.1
 https_link(<<"https:", Rest/bits>>, Prev) when ?IS_BOUNDARY(Prev) ->
 	direct_link(Rest, <<"https:">>).
 
@@ -261,6 +269,30 @@ https_link_test() ->
 		}, <<"hello there">>, _},
 		<<", young lad.">>
 	] = inline(<<"Oh, https://example.org/hello#fragment[hello there], young lad.">>),
+	ok.
+-endif.
+
+%% Asciidoc User Guide 21.1.1
+mailto_link(<<"mailto:", Rest0/bits>>, Prev) when ?IS_BOUNDARY(Prev) ->
+	{ok, {link, Attrs, Caption0, Ann}, Rest} = direct_link(Rest0, <<"mailto:">>),
+	Caption = case Caption0 of
+		<<"mailto:", Caption1/bits>> -> Caption1;
+		_ -> Caption0
+	end,
+	{ok, {link, Attrs, Caption, Ann}, Rest}.
+
+-ifdef(TEST).
+mailto_link_test() ->
+	[
+		{link, #{
+			target := <<"mailto:joe.bloggs@foobar.com">>
+		}, <<"email Joe Bloggs">>, _}
+	] = inline(<<"mailto:joe.bloggs@foobar.com[email Joe Bloggs]">>),
+	[
+		{link, #{
+			target := <<"mailto:srackham@gmail.com">>
+		}, <<"srackham@gmail.com">>, _}
+	] = inline(<<"mailto:srackham@gmail.com[]">>),
 	ok.
 -endif.
 
