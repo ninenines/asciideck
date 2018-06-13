@@ -1,3 +1,4 @@
+.asciideck.plt
 .erlang.mk/
 *.d
 deps/
