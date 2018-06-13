@@ -146,13 +146,13 @@ passthrough_block({passthrough_block, _, HTML, _}) ->
 %% Lists.
 
 list({list, #{type := bulleted}, Items, _}) ->
-	["<ul>", fold(Items, fun bulleted_list_item/1), "</ul>\n"];
+	["<ul>", fold(Items, fun list_item/1), "</ul>\n"];
 list({list, #{type := numbered}, Items, _}) ->
-	["<ol>", fold(Items, fun bulleted_list_item/1), "</ol>\n"];
+	["<ol>", fold(Items, fun list_item/1), "</ol>\n"];
 list({list, #{type := labeled}, Items, _}) ->
 	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"].
 
-bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
+list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
 		"<li>",
 		inline(Text), "\n",
