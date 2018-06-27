@@ -361,6 +361,33 @@ inline_literal_passthrough_test() ->
 -define(IS_WS(C), (C =:= $\s) or (C =:= $\t)).
 
 %% Asciidoc User Guide 10.3
-line_break(<<C, "+", Rest0/bits>>, _) when ?IS_WS(C) ->
-	%% @todo Rest0 until \r or \n is whitespace.
-	{ok, {line_break, #{}, <<>>, inline}, Rest0}.
+line_break(<<WS, "+", Rest0/bits>>, _) when ?IS_WS(WS) ->
+	{Eol, Rest} = case while(fun(C) -> (C =/= $\r) andalso (C =/= $\n) end, Rest0) of
+		{Eol0, <<"\r\n", Rest1/bits>>} -> {Eol0, Rest1};
+		{Eol0, <<"\n", Rest1/bits>>} -> {Eol0, Rest1};
+		Tuple -> Tuple
+	end,
+	<<>> = trim(Eol),
+	{ok, {line_break, #{}, <<>>, inline}, Rest}.
+
+-ifdef(TEST).
+line_break_test() ->
+	[
+		<<"Plus at the end of the line">>,
+		{line_break, #{}, <<>>, inline},
+		<<"should work">>
+	] = inline(<<"Plus at the end of the line +\nshould work">>),
+	[
+		<<"Plus at the end of the line   ">>,
+		{line_break, #{}, <<>>, inline},
+		<<"should work">>
+	] = inline(<<"Plus at the end of the line    +\nshould work">>),
+	[
+		<<"Plus at the end of the line">>,
+		{line_break, #{}, <<>>, inline},
+		<<"should work">>
+	] = inline(<<"Plus at the end of the line +\r\nshould work">>),
+	<<"Plus in the middle + should not.">>
+		= inline(<<"Plus in the middle + should not.">>),
+	ok.
+-endif.
