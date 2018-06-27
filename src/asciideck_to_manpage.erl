@@ -82,8 +82,9 @@ ast_node(Node={Type, _, _, _}) ->
 				io:format("Ignored AST node ~p~n", [Node]),
 				[]
 		end
-	catch _:_ ->
-		io:format("Ignored AST node ~p~n", [Node]),
+	catch C:E ->
+		io:format("Ignored AST node ~p~nReason: ~p:~p~nStacktrace: ~p~n",
+			[Node, C, E, erlang:get_stacktrace()]),
 		[]
 	end.
 
@@ -169,7 +170,7 @@ table({table, _, Rows0, _}) ->
 
 %% @todo Currently acts as if options="headers" was always set.
 table_apply_options([{row, RAttrs, Headers0, RAnn}|Tail]) ->
-	Headers = [{cell, CAttrs, [{strong, #{}, CText, CAnn}], CAnn}
+	Headers = [{cell, CAttrs#{style => <<"strong">>}, CText, CAnn}
 		|| {cell, CAttrs, CText, CAnn} <- Headers0],
 	[{row, RAttrs, Headers, RAnn}|Tail].
 
@@ -178,7 +179,10 @@ table_style(Rows) ->
 		|| {row, _, Cells, _} <- Rows].
 
 table_style_cells(Cells) ->
-	["lt " || {cell, _, _, _} <- Cells].
+	[case CAttrs of
+		#{style := <<"strong">>} -> "ltb ";
+		_ -> "lt "
+	end || {cell, CAttrs, _, _} <- Cells].
 
 table_contents(Rows) ->
 	[[table_contents_cells(Cells), "\n"]
@@ -188,7 +192,7 @@ table_contents_cells([FirstCell|Cells]) ->
 	[table_contents_cell(FirstCell),
 		[[":", table_contents_cell(Cell)] || Cell <- Cells]].
 
-table_contents_cell({cell, _, Text, _}) ->
+table_contents_cell({cell, _, [{paragraph, _, Text, _}], _}) ->
 	["T{\n", inline(Text), "\nT}"].
 
 %% Comment lines are printed in the generated file
@@ -219,5 +223,7 @@ inline({inline_literal_passthrough, _, Text, _}) ->
 %% Xref links appear as plain text in manuals.
 inline({xref, _, Text, _}) ->
 	inline(Text);
+inline({line_break, _, _, _}) ->
+	"\n.br\n";
 inline(Text) when is_list(Text) ->
 	[inline(T) || T <- Text].
