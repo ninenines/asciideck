@@ -44,7 +44,6 @@ maybe_header_footer(Body, _Opts) ->
 		"<head>\n"
 		"<meta charset=\"utf-8\"/>\n"
 		"<title>TODO title</title>\n" %% @todo
-		"<link rel=\"stylesheet\" type=\"text/css\" href=\"https://ninenines.eu/css/99s.css?r=1\"/>\n"
 		"</head>\n"
 		"<body>\n",
 		Body,
