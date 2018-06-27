@@ -174,7 +174,7 @@ parse_specs_style(<<>>, Spec) ->
 parse_specs_style(Bin, Spec) ->
 	Style = parse_specs_match_style(Bin, [
 		<<"default">>, <<"emphasis">>, <<"monospaced">>, <<"strong">>,
-		<<"header">>, <<"literal">>, <<"verse">>
+		<<"header">>, <<"asciidoc">>, <<"literal">>, <<"verse">>
 	]),
 	Spec#{style => Style}.
 
