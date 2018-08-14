@@ -16,6 +16,10 @@
 %% description of the format expected for man pages.
 -module(asciideck_to_manpage).
 
+-ifdef(OTP_RELEASE).
+-compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
+-endif.
+
 -export([translate/2]).
 
 translate(AST, Opts) ->

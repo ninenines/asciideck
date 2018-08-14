@@ -14,6 +14,10 @@
 
 -module(asciideck_to_html).
 
+-ifdef(OTP_RELEASE).
+-compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
+-endif.
+
 -export([translate/2]).
 
 translate(AST, Opts) ->
