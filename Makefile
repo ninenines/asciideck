@@ -45,11 +45,12 @@ $(ERLANG_MK_TMP)/groff/$1: | $(ERLANG_MK_TMP)/groff
 	$(verbose) git clone -q --depth 1 -- $(call dep_repo,$1) $$@
 	$(verbose) mkdir $$@/deps
 	$(verbose) ln -s $(CURDIR) $$@/deps/asciideck
+	$(verbose) touch $$@/deps/ci.erlang.mk
 	$(verbose) cp $(CURDIR)/erlang.mk $$@/
 
-groff-$1: $(ERLANG_MK_TMP)/groff/$1
-	$(gen_verbose) $(MAKE) -C $$^ asciidoc-manual
-	$(verbose) for f in $$^/doc/man*/*.gz; do \
+groff-$1: $(ERLANG_MK_TMP)/groff/$1 app
+	$(gen_verbose) $(MAKE) -C $$< asciidoc-manual MAKEFLAGS= DEPS_DIR=$$</deps ERL_LIBS=$$</deps
+	$(verbose) for f in $$</doc/man*/*.gz; do \
 		echo " GROFF " `basename "$$$$f"`; \
 		zcat "$$$$f" | groff -man -rD1 -z -ww; \
 	done

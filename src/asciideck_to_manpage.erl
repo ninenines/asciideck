@@ -118,7 +118,7 @@ listing_block({listing_block, Attrs, Listing, _}) ->
 		".RS 4\n"
 		".\\}\n"
 		".nf\n",
-		Listing,
+		escape(Listing),
 		"\n"
 		".fi\n"
 		".if n \\{\\\n"
@@ -208,7 +208,7 @@ comment_line({comment_line, _, Text, _}) ->
 %% Inline formatting.
 
 inline(Text) when is_binary(Text) ->
-	Text;
+	escape(Text);
 %% When the link is the text we only print it once.
 inline({link, #{target := Link}, Link, _}) ->
 	Link;
@@ -231,3 +231,6 @@ inline({line_break, _, _, _}) ->
 	"\n.br\n";
 inline(Text) when is_list(Text) ->
 	[inline(T) || T <- Text].
+
+escape(Text) ->
+	binary:replace(iolist_to_binary(Text), <<$\\>>, <<$\\, $\\>>, [global]).
