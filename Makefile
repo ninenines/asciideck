@@ -44,7 +44,12 @@ $(ERLANG_MK_TMP)/groff/$1: | $(ERLANG_MK_TMP)/groff
 	$(verbose) rm -rf $$@
 	$(verbose) git clone -q --depth 1 -- $(call dep_repo,$1) $$@
 	$(verbose) mkdir $$@/deps
+ifeq ($(PLATFORM),msys2)
+	$(verbose) cmd //c mklink $(call core_native_path,$(ERLANG_MK_TMP)/groff/$1/deps/asciideck) \
+		$(call core_native_path,$(CURDIR))
+else
 	$(verbose) ln -s $(CURDIR) $$@/deps/asciideck
+endif
 	$(verbose) touch $$@/deps/ci.erlang.mk
 	$(verbose) cp $(CURDIR)/erlang.mk $$@/
 
