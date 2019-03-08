@@ -18,7 +18,8 @@ DEP_EARLY_PLUGINS = ci.erlang.mk
 AUTO_CI_OTP ?= OTP-19+
 AUTO_CI_HIPE ?= OTP-LATEST
 # AUTO_CI_ERLLVM ?= OTP-LATEST
-AUTO_CI_WINDOWS ?= OTP-19+
+# Not sure why but the groff tests fail before OTP-21.
+AUTO_CI_WINDOWS ?= OTP-21+
 
 include erlang.mk
 
