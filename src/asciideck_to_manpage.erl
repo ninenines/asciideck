@@ -16,10 +16,6 @@
 %% description of the format expected for man pages.
 -module(asciideck_to_manpage).
 
--ifdef(OTP_RELEASE).
--compile({nowarn_deprecated_function, [{erlang, get_stacktrace, 0}]}).
--endif.
-
 -export([translate/2]).
 
 translate(AST, Opts) ->
@@ -86,9 +82,9 @@ ast_node(Node={Type, _, _, _}) ->
 				io:format("Ignored AST node ~p~n", [Node]),
 				[]
 		end
-	catch C:E ->
+	catch C:E:S ->
 		io:format("Ignored AST node ~p~nReason: ~p:~p~nStacktrace: ~p~n",
-			[Node, C, E, erlang:get_stacktrace()]),
+			[Node, C, E, S]),
 		[]
 	end.
 

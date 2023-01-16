@@ -15,10 +15,9 @@ dep_ct_helper = git https://github.com/ninenines/ct_helper master
 dep_ci.erlang.mk = git https://github.com/ninenines/ci.erlang.mk master
 DEP_EARLY_PLUGINS = ci.erlang.mk
 
-AUTO_CI_OTP ?= OTP-20+
+AUTO_CI_OTP ?= OTP-21+
 AUTO_CI_HIPE ?= OTP-LATEST
 # AUTO_CI_ERLLVM ?= OTP-LATEST
-# Not sure why but the groff tests fail before OTP-21.
 AUTO_CI_WINDOWS ?= OTP-21+
 
 include erlang.mk
