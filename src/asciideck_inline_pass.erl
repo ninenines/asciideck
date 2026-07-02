@@ -14,6 +14,7 @@
 
 %% This pass walks over the tree and parses inline elements.
 -module(asciideck_inline_pass).
+-compile({no_auto_import, [link/2]}).
 
 -export([run/1]).
 
