@@ -28,3 +28,22 @@ missing_name_section(_) ->
 	AST = asciideck:parse("= missing_name(3)\n\n== Not name\n\nFail!"),
 	{'EXIT', _} = (catch asciideck:to_manpage(AST)),
 	ok.
+
+admonition_paragraph(_) ->
+	doc("Admonition paragraphs are rendered in man pages. (15.4)"),
+	AST = asciideck:parse(
+		"= admonition(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"admonition - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"NOTE: The static handler considers that the local filesystem "
+			"is trusted.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBNote\\fR">>),
+	{_, _} = binary:match(Man, <<"The static handler considers that the local filesystem is trusted.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.

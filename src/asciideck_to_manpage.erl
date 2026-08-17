@@ -74,6 +74,7 @@ ast_node(Node={Type, _, _, _}) ->
 		case Type of
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
+			admonition -> admonition(Node);
 			listing_block -> listing_block(Node);
 			list -> list(Node);
 			table -> table(Node);
@@ -99,6 +100,26 @@ section_title({section_title, #{level := 2}, Title, _}) ->
 
 paragraph({paragraph, _, Text, _}) ->
 	[".LP\n", inline(Text), "\n.sp\n"].
+
+%% Admonition paragraphs.
+
+admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
+	Label = admonition_label(Style),
+	Title = case Attrs of
+		#{<<"title">> := T} -> [": ", inline(T)];
+		_ -> []
+	end,
+	[
+		".RS 4\n"
+		"\\fB", Label, Title, "\\fR\n"
+		".br\n",
+		inline(Text), "\n"
+		".RE\n"
+		".sp\n"
+	].
+
+admonition_label(<<C, Rest/bits>>) ->
+	[string:to_upper([C]), string:to_lower(binary_to_list(Rest))].
 
 %% Listing blocks.
 

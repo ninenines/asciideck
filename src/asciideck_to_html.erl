@@ -69,6 +69,7 @@ ast_node(Node={Type, _, _, _}) ->
 		case Type of
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
+			admonition -> admonition(Node);
 			listing_block -> listing_block(Node);
 			passthrough_block -> passthrough_block(Node);
 			list -> list(Node);
@@ -114,6 +115,27 @@ id_from_title(Title) ->
 
 paragraph({paragraph, _, Text, _}) ->
 	["<p>", inline(Text), "</p>\n"].
+
+%% Admonition paragraphs.
+
+admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
+	Class = string:to_lower(binary_to_list(Style)),
+	[
+		"<div class=\"admonitionblock ", Class, "\">",
+		"<div class=\"title\">", admonition_label(Style), "</div>\n",
+		"<div class=\"content\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		inline(Text),
+		"</div></div>\n"
+	].
+
+admonition_label(<<C, Rest/bits>>) ->
+	[string:to_upper([C]), string:to_lower(binary_to_list(Rest))].
 
 %% Listing blocks.
 
@@ -244,3 +266,26 @@ html_encode(Text) ->
 		$' -> <<"&apos;">>;
 		_ -> <<C/utf8>>
 	end || <<C/utf8>> <= Text>>.
+
+-ifdef(TEST).
+admonition_test() ->
+	AST = [{admonition, #{style => <<"NOTE">>}, <<"Be careful.">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">Be careful.</div></div>\n">> = HTML,
+	ok.
+
+admonition_title_test() ->
+	AST = [{admonition, #{
+		style => <<"WARNING">>,
+		<<"title">> => <<"Watch out">>
+	}, <<"Be careful.">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock warning\">"
+		"<div class=\"title\">Warning</div>\n"
+		"<div class=\"content\">"
+		"<div class=\"title\">Watch out</div>\n"
+		"Be careful.</div></div>\n">> = HTML,
+	ok.
+-endif.

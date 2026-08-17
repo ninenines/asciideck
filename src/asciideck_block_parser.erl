@@ -1001,8 +1001,50 @@ block_title_test() ->
 literal_para(St) -> throw({not_implemented, St}). %% @todo
 
 %% Asciidoc User Guide 15.4
--spec admonition_para(_) -> no_return().
-admonition_para(St) -> throw({not_implemented, St}). %% @todo
+admonition_para(St) ->
+	Line0 = read_line(St),
+	Ann = ann(St),
+	{Style, Para0} = admonition_style(Line0),
+	Para1 = trim(Para0),
+	%% Admonition paragraphs end like normal paragraphs.
+	Para = read_while(St, fun fold_para/1, Para1),
+	{admonition, #{style => Style}, Para, Ann}.
+
+admonition_style(<<"NOTE:", C, R/bits>>) when ?IS_WS(C) -> {<<"NOTE">>, R};
+admonition_style(<<"TIP:", C, R/bits>>) when ?IS_WS(C) -> {<<"TIP">>, R};
+admonition_style(<<"IMPORTANT:", C, R/bits>>) when ?IS_WS(C) -> {<<"IMPORTANT">>, R};
+admonition_style(<<"WARNING:", C, R/bits>>) when ?IS_WS(C) -> {<<"WARNING">>, R};
+admonition_style(<<"CAUTION:", C, R/bits>>) when ?IS_WS(C) -> {<<"CAUTION">>, R}.
+
+-ifdef(TEST).
+admonition_para_test() ->
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}]
+		= parse(<<"NOTE: This is a note.">>),
+	[{admonition, #{style := <<"TIP">>}, <<"This is a tip.">>, _}]
+		= parse(<<"TIP: This is a tip.">>),
+	[{admonition, #{style := <<"IMPORTANT">>}, <<"This is important.">>, _}]
+		= parse(<<"IMPORTANT: This is important.">>),
+	[{admonition, #{style := <<"WARNING">>}, <<"This is a warning.">>, _}]
+		= parse(<<"WARNING: This is a warning.">>),
+	[{admonition, #{style := <<"CAUTION">>}, <<"This is a caution.">>, _}]
+		= parse(<<"CAUTION: This is a caution.">>),
+	%% Extra whitespace after the prefix is trimmed.
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}]
+		= parse(<<"NOTE:   This is a note.">>),
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}]
+		= parse(<<"NOTE:\tThis is a note.">>),
+	%% Multi-line paragraph body.
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.\nIt spans two lines.">>, _}]
+		= parse(<<"NOTE: This is a note.\nIt spans two lines.">>),
+	%% A space after the colon is required.
+	?NOT(admonition, parse(<<"NOTE:This is a note.">>)),
+	%% The style must be uppercase and hard against the left margin.
+	?NOT(admonition, parse(<<"Note: This is a note.">>)),
+	?NOT(admonition, parse(<<"note: This is a note.">>)),
+	?NOT(admonition, parse(<<" NOTE: This is a note.">>)),
+	?NOT(admonition, parse(<<"NOTES: This is a note.">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 15.1
 para(St) ->

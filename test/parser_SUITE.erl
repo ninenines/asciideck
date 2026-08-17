@@ -197,7 +197,7 @@ title_short_wrong_trailer(_) ->
 
 %% Normal paragraphs.
 
-%% @todo Other kinds of paragraphs. (15 excluding 15.1)
+%% @todo Other kinds of paragraphs. (15.2, 15.3)
 
 paragraph(_) ->
 	doc("Normal paragraph. (15.1)"),
@@ -223,6 +223,83 @@ paragraph_title(_) ->
 		"Hello world\n"
 		"this is a paragraph\n"
 		"peace.\n"),
+	ok.
+
+%% Admonition paragraphs.
+
+admonition_paragraph(_) ->
+	doc("Admonition paragraphs. (15.4)"),
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}] =
+		parse("NOTE: This is a note."),
+	[{admonition, #{style := <<"TIP">>}, <<"This is a tip.">>, _}] =
+		parse("TIP: This is a tip."),
+	[{admonition, #{style := <<"IMPORTANT">>}, <<"This is important.">>, _}] =
+		parse("IMPORTANT: This is important."),
+	[{admonition, #{style := <<"WARNING">>}, <<"This is a warning.">>, _}] =
+		parse("WARNING: This is a warning."),
+	[{admonition, #{style := <<"CAUTION">>}, <<"This is a caution.">>, _}] =
+		parse("CAUTION: This is a caution."),
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note. It spans two lines.">>, _}] =
+		parse(
+			"NOTE: This is a note.\n"
+			"It spans two lines.\n"),
+	[
+		{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _},
+		{paragraph, _, <<"This is a paragraph.">>, _}
+	] = parse(
+		"NOTE: This is a note.\n"
+		"\n"
+		"This is a paragraph.\n"),
+	[{paragraph, _, <<"NOTE:This is not an admonition.">>, _}] =
+		parse("NOTE:This is not an admonition."),
+	[{paragraph, _, <<"Note: This is not an admonition.">>, _}] =
+		parse("Note: This is not an admonition."),
+	ok.
+
+admonition_paragraph_style(_) ->
+	doc("Admonition style applied to the following paragraph. (15.4)"),
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}] =
+		parse(
+			"[NOTE]\n"
+			"This is a note.\n"),
+	[{admonition, #{style := <<"TIP">>}, <<"This is a tip.">>, _}] =
+		parse(
+			"[TIP]\n"
+			"This is a tip.\n"),
+	[{admonition, #{style := <<"IMPORTANT">>}, <<"This is important.">>, _}] =
+		parse(
+			"[IMPORTANT]\n"
+			"This is important.\n"),
+	[{admonition, #{style := <<"WARNING">>}, <<"This is a warning.">>, _}] =
+		parse(
+			"[WARNING]\n"
+			"This is a warning.\n"),
+	[{admonition, #{style := <<"CAUTION">>}, <<"This is a caution.">>, _}] =
+		parse(
+			"[CAUTION]\n"
+			"This is a caution.\n"),
+	ok.
+
+admonition_paragraph_title(_) ->
+	doc("Admonition paragraph preceded by a block title. (12, 15.4)"),
+	[{admonition, #{style := <<"NOTE">>, <<"title">> := <<"Watch out">>},
+		<<"This is a note.">>, _}] = parse(
+			".Watch out\n"
+			"NOTE: This is a note.\n"),
+	[{admonition, #{style := <<"NOTE">>, <<"title">> := <<"Watch out">>},
+		<<"This is a note.">>, _}] = parse(
+			".Watch out\n"
+			"[NOTE]\n"
+			"This is a note.\n"),
+	ok.
+
+admonition_paragraph_formatting(_) ->
+	doc("Admonition paragraphs honor inline formatting. (10.1, 15.4)"),
+	[{admonition, #{style := <<"NOTE">>}, [
+		<<"This is ">>,
+		{strong, _, <<"important">>, _},
+		<<".">>
+	], _}] = parse("NOTE: This is *important*."),
 	ok.
 
 %% Listing blocks.
