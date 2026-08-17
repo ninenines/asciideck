@@ -197,7 +197,7 @@ title_short_wrong_trailer(_) ->
 
 %% Normal paragraphs.
 
-%% @todo Other kinds of paragraphs. (15.2, 15.3)
+%% @todo Other kinds of paragraphs. (15.3)
 
 paragraph(_) ->
 	doc("Normal paragraph. (15.1)"),
@@ -223,6 +223,69 @@ paragraph_title(_) ->
 		"Hello world\n"
 		"this is a paragraph\n"
 		"peace.\n"),
+	ok.
+
+%% Literal paragraphs.
+
+literal_paragraph(_) ->
+	doc("Indented paragraphs are literal. (15.2)"),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"Consul *necessitatibus* per id,">>, _}] =
+		parse("  Consul *necessitatibus* per id,"),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"Consul *necessitatibus* per id,\n"
+		  "consetetur, eu pro everti postulant\n"
+		  "homero verear ea mea, qui.">>, _}] = parse(
+			"  Consul *necessitatibus* per id,\n"
+			"  consetetur, eu pro everti postulant\n"
+			"  homero verear ea mea, qui.\n"),
+	%% Verbatim: no inline formatting.
+	[{literal_paragraph, _, <<"Hello *world*!">>, _}] =
+		parse("  Hello *world*!"),
+	%% Relative indentation is preserved.
+	[{literal_paragraph, _, <<"foo() ->\n    ok.">>, _}] = parse(
+		"  foo() ->\n"
+		"      ok.\n"),
+	%% Indented // and + stay inside the literal paragraph.
+	[{literal_paragraph, _, <<"x = 1\n// increment\nx = x + 1\n+">>, _}] = parse(
+		"  x = 1\n"
+		"  // increment\n"
+		"  x = x + 1\n"
+		"  +\n"),
+	ok.
+
+literal_paragraph_style(_) ->
+	doc("Literal style applied to the following paragraph. (15.2)"),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"Consul *necessitatibus* per id,">>, _}] = parse(
+			"[literal]\n"
+			"Consul *necessitatibus* per id,\n"),
+	%% Attribute-list styles override implicit literal paragraphs.
+	[{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>},
+		<<"f() -> ok.">>, _}] = parse(
+			"[source,erlang]\n"
+			"    f() -> ok.\n"),
+	[{admonition, #{style := <<"NOTE">>}, [
+		<<"Use ">>,
+		{strong, _, <<"bold">>, _},
+		<<".">>
+	], _}] = parse(
+		"[NOTE]\n"
+		"    Use *bold*.\n"),
+	ok.
+
+literal_paragraph_in_list(_) ->
+	doc("A literal paragraph immediately following a list item is a child. (17, 15.2)"),
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"Lorem">>}, [
+			{paragraph, _, <<"Fusce euismod commodo velit.">>, _},
+			{literal_paragraph, _, <<"Fusce euismod commodo velit.">>, _}
+		], _}
+	], _}] = parse(
+		"Lorem::\n"
+		"  Fusce euismod commodo velit.\n"
+		"\n"
+		"  Fusce euismod commodo velit.\n"),
 	ok.
 
 %% Admonition paragraphs.

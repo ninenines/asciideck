@@ -29,7 +29,7 @@
 %%   of the tree is not a problem.
 %%
 %% - Any literal paragraph following a list item is a
-%%   child of that list item. @todo
+%%   child of that list item.
 %%
 %% - Any other block can be included as a child by using
 %%   list continuations.
@@ -82,6 +82,9 @@ item([{list_item_continuation, _, _, _}, LI={list_item, _, _, _}|Tail], CurrentL
 	item([LI|Tail], CurrentLI, Parents, Acc);
 item([{list_item_continuation, _, _, _}, Block|Tail], CurrentLI, Parents, Acc) ->
 	item(Tail, add_child(CurrentLI, Block), Parents, Acc);
+%% A literal paragraph immediately following a list item is a child.
+item([LP={literal_paragraph, _, _, _}|Tail], CurrentLI, Parents, Acc) ->
+	item(Tail, add_child(CurrentLI, LP), Parents, Acc);
 %% Anything else is the end of the list.
 item(Tail, CurrentLI, _, Acc) ->
 	{lists:reverse([reverse_children(CurrentLI)|Acc]), Tail}.
@@ -150,6 +153,20 @@ list_continuation_test() ->
 		{listing_block, #{}, <<"hello() -> world.">>, #{line => 3}},
 		{list_item, #{type => bulleted, level => 1},
 			[{paragraph, #{}, <<"World!">>, #{line => 6}}], #{line => 6}}
+	]),
+	ok.
+
+literal_paragraph_child_test() ->
+	[{list, #{type := labeled}, [
+		{list_item, #{label := <<"Lorem">>}, [
+			{paragraph, #{}, <<"Fusce euismod commodo velit.">>, _},
+			{literal_paragraph, #{}, <<"Fusce euismod commodo velit.">>, #{line := 4}}
+		], #{line := 1}}
+	], #{line := 1}}] = run([
+		{list_item, #{type => labeled, separator => <<"::">>, label => <<"Lorem">>},
+			[{paragraph, #{}, <<"Fusce euismod commodo velit.">>, #{line => 1}}], #{line => 1}},
+		{literal_paragraph, #{<<"subs">> => <<"verbatim">>},
+			<<"Fusce euismod commodo velit.">>, #{line => 4}}
 	]),
 	ok.
 -endif.

@@ -75,6 +75,8 @@ ast_node(Node={Type, _, _, _}) ->
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
 			admonition -> admonition(Node);
+			literal_paragraph -> listing_block(Node);
+			literal_block -> listing_block(Node);
 			listing_block -> listing_block(Node);
 			list -> list(Node);
 			table -> table(Node);
@@ -123,7 +125,7 @@ admonition_label(<<C, Rest/bits>>) ->
 
 %% Listing blocks.
 
-listing_block({listing_block, Attrs, Listing, _}) ->
+listing_block({_, Attrs, Listing, _}) ->
 	[
 		case Attrs of
 			#{<<"title">> := Title} ->

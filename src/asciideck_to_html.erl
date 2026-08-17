@@ -70,6 +70,8 @@ ast_node(Node={Type, _, _, _}) ->
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
 			admonition -> admonition(Node);
+			literal_paragraph -> literal_paragraph(Node);
+			literal_block -> literal_paragraph(Node);
 			listing_block -> listing_block(Node);
 			passthrough_block -> passthrough_block(Node);
 			list -> list(Node);
@@ -136,6 +138,21 @@ admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
 
 admonition_label(<<C, Rest/bits>>) ->
 	[string:to_upper([C]), string:to_lower(binary_to_list(Rest))].
+
+%% Literal paragraphs and delimited literal blocks.
+
+literal_paragraph({Type, Attrs, Text, _})
+		when Type =:= literal_paragraph; Type =:= literal_block ->
+	[
+		"<div class=\"literalblock\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		"<div class=\"content\"><pre>", html_encode(Text), "</pre></div></div>\n"
+	].
 
 %% Listing blocks.
 
@@ -274,6 +291,14 @@ admonition_test() ->
 	<<"<div class=\"admonitionblock note\">"
 		"<div class=\"title\">Note</div>\n"
 		"<div class=\"content\">Be careful.</div></div>\n">> = HTML,
+	ok.
+
+literal_paragraph_test() ->
+	AST = [{literal_paragraph, #{<<"subs">> => <<"verbatim">>},
+		<<"Hello *world*!">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"literalblock\">"
+		"<div class=\"content\"><pre>Hello *world*!</pre></div></div>\n">> = HTML,
 	ok.
 
 admonition_title_test() ->

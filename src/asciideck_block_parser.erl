@@ -577,13 +577,13 @@ labeled_list_test() ->
 		[{paragraph, _, <<"Answer!">>, _}], _}] = parse(<<"Question:: Answer!">>),
 	[{list_item, #{type := labeled, separator := <<"::">>, label := <<"Question">>},
 		[{paragraph, _, <<"Answer!">>, _}], _}] = parse(<<"Question::\n  Answer!">>),
-	%% Long snippet from the Asciidoc User Guide, minus literal paragraph.
-	%% @todo Add the literal paragraph back once they are implemented.
+	%% Long snippet from the Asciidoc User Guide.
 	[
 		{list_item, #{type := labeled, separator := <<"::">>, label := <<"In">>},
 			[{paragraph, _, <<>>, _}], _},
 		{list_item, #{type := labeled, separator := <<"::">>, label := <<"Lorem">>},
 			[{paragraph, _, <<"Fusce euismod commodo velit.">>, _}], _},
+		{literal_paragraph, _, <<"Fusce euismod commodo velit.">>, _},
 		{list_item, #{type := labeled, separator := <<"::">>, label := <<"Ipsum">>},
 			[{paragraph, _, <<"Vivamus fringilla mi eu lacus.">>, _}], _},
 		{list_item, #{type := bulleted, level := 1},
@@ -606,7 +606,9 @@ labeled_list_test() ->
 		"In::\n"
 		"Lorem::\n"
 		"  Fusce euismod commodo velit.\n"
-		%% @todo Add literal paragraph back here.
+		"\n"
+		"  Fusce euismod commodo velit.\n"
+		"\n"
 		"Ipsum:: Vivamus fringilla mi eu lacus.\n"
 		"  * Vivamus fringilla mi eu lacus.\n"
 		"  * Donec eget arcu bibendum nunc consequat lobortis.\n"
@@ -997,8 +999,86 @@ block_title_test() ->
 -endif.
 
 %% Asciidoc User Guide 15.2
--spec literal_para(_) -> no_return().
-literal_para(St) -> throw({not_implemented, St}). %% @todo
+%%
+%% An indented paragraph is implicitly a literal paragraph.
+%% The [literal] style on a normal paragraph is handled later
+%% by the transform pass.
+literal_para(St) ->
+	%% First line must be indented by one or more spaces or tabs.
+	<<C, _/bits>> = Line0 = read_line(St),
+	true = ?IS_WS(C),
+	Ann = ann(St),
+	{Indent, Line1} = split_indent(Line0),
+	%% Further lines belong to the same paragraph while they stay indented.
+	%% Only the first line's indent is stripped, so relative indent is kept.
+	Para = read_while(St, fun(L) -> fold_literal_para(L, Indent) end,
+		trim(Line1, trailing)),
+	{literal_paragraph, #{<<"subs">> => <<"verbatim">>}, Para, Ann}.
+
+split_indent(Line) ->
+	split_indent(Line, <<>>).
+
+split_indent(<<C, R/bits>>, Acc) when ?IS_WS(C) ->
+	split_indent(R, <<Acc/binary, C>>);
+split_indent(Rest, Acc) ->
+	{Acc, Rest}.
+
+strip_indent(Line, <<>>) ->
+	Line;
+strip_indent(<<C, R/bits>>, <<C, IR/bits>>) ->
+	strip_indent(R, IR);
+strip_indent(Line, _) ->
+	Line.
+
+fold_literal_para(eof, _) ->
+	done;
+fold_literal_para(Line0, Indent) ->
+	case trim(Line0) of
+		<<>> -> done;
+		_ ->
+			<<C, _/bits>> = Line0,
+			case ?IS_WS(C) of
+				true -> {more, trim(strip_indent(Line0, Indent), trailing)};
+				false -> done
+			end
+	end.
+
+-ifdef(TEST).
+literal_para_test() ->
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"Consul *necessitatibus* per id,">>, _}]
+		= parse(<<"  Consul *necessitatibus* per id,">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"Consul *necessitatibus* per id,\n"
+		  "consetetur, eu pro everti postulant\n"
+		  "homero verear ea mea, qui.">>, _}] = parse(<<
+			"  Consul *necessitatibus* per id,\n"
+			"  consetetur, eu pro everti postulant\n"
+			"  homero verear ea mea, qui.">>),
+	%% Tabs also count as indentation.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>}, <<"Hello!">>, _}]
+		= parse(<<"\tHello!">>),
+	%% Relative indentation is preserved.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo() ->\n    ok.">>, _}] = parse(<<
+			"  foo() ->\n"
+			"      ok.">>),
+	%% Indented // and + are literal text, not comments or continuations.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"x = 1\n// increment\nx = x + 1\n+">>, _}] = parse(<<
+			"  x = 1\n"
+			"  // increment\n"
+			"  x = x + 1\n"
+			"  +">>),
+	%% A non-indented line starts a new paragraph.
+	[
+		{literal_paragraph, _, <<"Hello!">>, _},
+		{paragraph, _, <<"World!">>, _}
+	] = parse(<<"  Hello!\nWorld!">>),
+	%% Must actually be indented.
+	?NOT(literal_paragraph, parse(<<"Hello!">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 15.4
 admonition_para(St) ->
@@ -1051,8 +1131,7 @@ para(St) ->
 	%% Paragraph must be hard against the left margin.
 	<<C, _/bits>> = Para0 = read_line(St),
 	Ann = ann(St),
-	%% @todo Uncomment this line once everything else has been implemented.
-	_ = ?IS_WS(C), % false = ?IS_WS(C),
+	false = ?IS_WS(C),
 	Para1 = trim(Para0),
 	%% Paragraph ends at blank line, end of file or start of delimited block or list.
 	Para = read_while(St, fun fold_para/1, Para1),
