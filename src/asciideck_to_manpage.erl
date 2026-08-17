@@ -157,7 +157,9 @@ listing_block({_, Attrs, Listing, _}) ->
 list({list, #{type := bulleted}, Items, _}) ->
 	fold(Items, fun bulleted_list_item/1);
 list({list, #{type := labeled}, Items, _}) ->
-	fold(Items, fun labeled_list_item/1).
+	fold(Items, fun labeled_list_item/1);
+list({list, #{type := callout}, Items, _}) ->
+	fold(Items, fun callout_list_item/1).
 
 bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
@@ -173,6 +175,17 @@ bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 		inline(Text), "\n",
 		ast(AST),
 		".RE\n"
+	].
+
+callout_list_item({list_item, Attrs, [{paragraph, _, Text, _}|AST], _}) ->
+	Num = case Attrs of
+		#{number := N} when is_integer(N) -> integer_to_list(N);
+		_ -> "1"
+	end,
+	[
+		".IP ", Num, "\n",
+		inline(Text), "\n",
+		ast(AST)
 	].
 
 labeled_list_item({list_item, #{label := Label}, [{paragraph, _, Text, _}|AST], _}) ->

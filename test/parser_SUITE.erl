@@ -585,6 +585,47 @@ labeled_list(_) ->
 		"\n"),
 	ok.
 
+%% Callout lists.
+
+callout_list(_) ->
+	doc("Callout lists annotate verbatim text. (20)"),
+	[{list, #{type := callout}, [
+		{list_item, #{number := 1},
+			[{paragraph, _, <<"This directory holds MS-DOS.">>, _}], _},
+		{list_item, #{number := 2},
+			[{paragraph, _, <<"System startup code for DOS.">>, _}], _},
+		{list_item, #{number := 3},
+			[{paragraph, _, <<"Some sort of Windows 3.1 hack.">>, _}], _}
+	], _}] = parse(
+		"<1> This directory holds MS-DOS.\n"
+		"<2> System startup code for DOS.\n"
+		"<3> Some sort of Windows 3.1 hack.\n"),
+	[{list, #{type := callout}, [
+		{list_item, #{number := 1},
+			[{paragraph, _, <<"First.">>, _}], _},
+		{list_item, #{number := 2},
+			[{paragraph, _, <<"Second.">>, _}], _}
+	], _}] = parse(
+		"1> First.\n"
+		"2> Second.\n"),
+	[{list, #{type := callout}, [
+		{list_item, #{number := auto},
+			[{paragraph, _, <<"Implicit.">>, _}], _}
+	], _}] = parse("> Implicit.\n"),
+	%% A listing followed by a callout list.
+	[
+		{listing_block, _, <<"10/17/97   9:04         <DIR>    bin <1>">>, _},
+		{list, #{type := callout}, [
+			{list_item, #{number := 1},
+				[{paragraph, _, <<"This directory holds MS-DOS.">>, _}], _}
+		], _}
+	] = parse(
+		"----\n"
+		"10/17/97   9:04         <DIR>    bin <1>\n"
+		"----\n"
+		"<1> This directory holds MS-DOS.\n"),
+	ok.
+
 %% Attribute entries.
 
 attribute_entry(_) ->

@@ -212,7 +212,9 @@ list({list, #{type := bulleted}, Items, _}) ->
 list({list, #{type := numbered}, Items, _}) ->
 	["<ol>", fold(Items, fun list_item/1), "</ol>\n"];
 list({list, #{type := labeled}, Items, _}) ->
-	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"].
+	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"];
+list({list, #{type := callout}, Items, _}) ->
+	["<div class=\"colist\"><ol>", fold(Items, fun list_item/1), "</ol></div>\n"].
 
 list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
@@ -315,6 +317,15 @@ admonition_test() ->
 	<<"<div class=\"admonitionblock note\">"
 		"<div class=\"title\">Note</div>\n"
 		"<div class=\"content\">Be careful.</div></div>\n">> = HTML,
+	ok.
+
+callout_list_test() ->
+	AST = [{list, #{type => callout}, [
+		{list_item, #{type => callout, number => 1},
+			[{paragraph, #{}, <<"First.">>, #{line => 1}}], #{line => 1}}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"colist\"><ol><li>First.\n</li>\n</ol></div>\n">> = HTML,
 	ok.
 
 open_block_test() ->

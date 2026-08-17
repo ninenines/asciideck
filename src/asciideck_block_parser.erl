@@ -629,8 +629,58 @@ labeled_list_test() ->
 -endif.
 
 %% Asciidoc User Guide 20
--spec callout_list(_) -> no_return().
-callout_list(St) -> throw({not_implemented, St}). %% @todo
+callout_list(St) ->
+	Line0 = read_line(St),
+	{Number, ListItem} = callout_marker(Line0),
+	list_item(St, #{
+		type => callout,
+		number => Number
+	}, ListItem).
+
+%% <1> annotation
+%% 1> annotation
+%% > annotation (implicit numbering)
+callout_marker(<<"<", C, Rest/bits>>) when C >= $0, C =< $9 ->
+	{Num, <<">", R/bits>>} = while(fun is_digit/1, <<C, Rest/bits>>),
+	{binary_to_integer(Num), R};
+callout_marker(<<C, Rest/bits>>) when C >= $0, C =< $9 ->
+	{Num, <<">", R/bits>>} = while(fun is_digit/1, <<C, Rest/bits>>),
+	{binary_to_integer(Num), R};
+callout_marker(<<">", Rest/bits>>) ->
+	{auto, Rest}.
+
+is_digit(C) ->
+	(C >= $0) andalso (C =< $9).
+
+is_callout_line(Line) ->
+	try
+		_ = callout_marker(Line),
+		true
+	catch _:_ ->
+		false
+	end.
+
+-ifdef(TEST).
+callout_list_test() ->
+	[{list_item, #{type := callout, number := 1},
+		[{paragraph, _, <<"This directory holds MS-DOS.">>, _}], _}]
+		= parse(<<"<1> This directory holds MS-DOS.">>),
+	[{list_item, #{type := callout, number := 2},
+		[{paragraph, _, <<"System startup code for DOS.">>, _}], _}]
+		= parse(<<"2> System startup code for DOS.">>),
+	[{list_item, #{type := callout, number := auto},
+		[{paragraph, _, <<"Some sort of Windows 3.1 hack.">>, _}], _}]
+		= parse(<<"> Some sort of Windows 3.1 hack.">>),
+	[
+		{list_item, #{type := callout, number := 1},
+			[{paragraph, _, <<"First.">>, _}], _},
+		{list_item, #{type := callout, number := 2},
+			[{paragraph, _, <<"Second.">>, _}], _}
+	] = parse(<<"<1> First.\n<2> Second.">>),
+	%% Must be hard against the left margin.
+	?NOT(callout, parse(<<" <1> Indented.">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 17
 %%
@@ -685,7 +735,10 @@ fold_list_item(Line0) ->
 			try find_labeled_list(Line) of
 				{_, _, _} -> done
 			catch _:_ ->
-				{more, Line}
+				case is_callout_line(Line0) of
+					true -> done;
+					false -> {more, Line}
+				end
 			end
 	end.
 

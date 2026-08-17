@@ -29,6 +29,23 @@ missing_name_section(_) ->
 	{'EXIT', _} = (catch asciideck:to_manpage(AST)),
 	ok.
 
+callout_list(_) ->
+	doc("Callout lists are rendered in man pages. (20)"),
+	AST = asciideck:parse(
+		"= callout(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"callout - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"<1> This directory holds MS-DOS.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"This directory holds MS-DOS.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.
+
 attribute_entry(_) ->
 	doc("Attribute entries are omitted from man page output. (28)"),
 	AST = asciideck:parse(

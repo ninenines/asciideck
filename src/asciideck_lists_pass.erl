@@ -54,24 +54,23 @@ list([{open_block, Attrs, Children, Ann}|Tail], Acc) ->
 list([Block|Tail], Acc) ->
 	list(Tail, [Block|Acc]).
 
-%% Bulleted/numbered list item of the same type.
-item([NextLI={list_item, #{type := T, level := L}, _, _}|Tail],
-		CurrentLI={list_item, #{type := T, level := L}, _, _}, Parents, Acc) ->
-	item(Tail, NextLI, Parents, [reverse_children(CurrentLI)|Acc]);
-%% Labeled list item of the same type.
-item([NextLI={list_item, #{type := T, separator := S}, _, _}|Tail],
-		CurrentLI={list_item, #{type := T, separator := S}, _, _}, Parents, Acc) ->
-	item(Tail, NextLI, Parents, [reverse_children(CurrentLI)|Acc]);
-%% Other list items are either parent or children lists.
-item(FullTail=[NextLI={list_item, Attrs, _, Ann}|Tail0], CurrentLI, Parents, Acc) ->
-	case lists:member(type(Attrs), Parents) of
-		%% We have a parent list item. This is the end of this child list.
+%% List items of the same type (and level/separator, when present)
+%% are siblings. Callout items have a type but no level.
+item([NextLI={list_item, NextAttrs, _, Ann}|Tail],
+		CurrentLI={list_item, Attrs, _, _}, Parents, Acc) ->
+	case type(NextAttrs) =:= type(Attrs) of
 		true ->
-			{lists:reverse([reverse_children(CurrentLI)|Acc]), FullTail};
-		%% We have a child list item. This is the beginning of a new list.
+			item(Tail, NextLI, Parents, [reverse_children(CurrentLI)|Acc]);
 		false ->
-			{Items, Tail} = item(Tail0, NextLI, [type(Attrs)|Parents], []),
-			item(Tail, add_child(CurrentLI, {list, Attrs, Items, Ann}), Parents, Acc)
+			case lists:member(type(NextAttrs), Parents) of
+				%% We have a parent list item. This is the end of this child list.
+				true ->
+					{lists:reverse([reverse_children(CurrentLI)|Acc]), [NextLI|Tail]};
+				%% We have a child list item. This is the beginning of a new list.
+				false ->
+					{Items, Rest} = item(Tail, NextLI, [type(NextAttrs)|Parents], []),
+					item(Rest, add_child(CurrentLI, {list, NextAttrs, Items, Ann}), Parents, Acc)
+			end
 	end;
 %% Ignore multiple contiguous list continuations.
 item([LIC={list_item_continuation, _, _, _},
@@ -160,6 +159,20 @@ list_continuation_test() ->
 		{listing_block, #{}, <<"hello() -> world.">>, #{line => 3}},
 		{list_item, #{type => bulleted, level => 1},
 			[{paragraph, #{}, <<"World!">>, #{line => 6}}], #{line => 6}}
+	]),
+	ok.
+
+callout_list_test() ->
+	[{list, #{type := callout}, [
+		{list_item, #{number := 1},
+			[{paragraph, #{}, <<"First.">>, _}], #{line := 1}},
+		{list_item, #{number := 2},
+			[{paragraph, #{}, <<"Second.">>, _}], #{line := 2}}
+	], #{line := 1}}] = run([
+		{list_item, #{type => callout, number => 1},
+			[{paragraph, #{}, <<"First.">>, #{line => 1}}], #{line => 1}},
+		{list_item, #{type => callout, number => 2},
+			[{paragraph, #{}, <<"Second.">>, #{line => 2}}], #{line => 2}}
 	]),
 	ok.
 
