@@ -514,6 +514,35 @@ labeled_list(_) ->
 		"\n"),
 	ok.
 
+%% Attribute entries.
+
+attribute_entry(_) ->
+	doc("Attribute entries set document attributes. (28)"),
+	[{attribute_entry, #{name := <<"author">>, unset := false},
+		<<"Stuart Rackham">>, _}] = parse(":author: Stuart Rackham"),
+	[{attribute_entry, #{name := <<"authorinitials">>, unset := false},
+		<<"JB">>, _}] = parse(":Author Initials: JB"),
+	[{attribute_entry, #{name := <<"toc">>, unset := false},
+		<<>>, _}] = parse(":toc:"),
+	[{attribute_entry, #{name := <<"toc">>, unset := true},
+		<<>>, _}] = parse(":toc!:"),
+	[{attribute_entry, #{name := <<"description">>, unset := false},
+		<<"AsciiDoc is a text document format for writing notes, "
+		  "documentation, articles, books, slideshows, web pages "
+		  "and man pages.">>, _}] = parse(
+			":description: AsciiDoc is a text document format for writing notes, +\n"
+			"              documentation, articles, books, slideshows, web pages +\n"
+			"              and man pages.\n"),
+	%% Attribute entries do not consume a following block title.
+	[
+		{attribute_entry, #{name := <<"author">>}, <<"Loic">>, _},
+		{paragraph, #{<<"title">> := <<"Notes">>}, <<"Hello.">>, _}
+	] = parse(
+		":author: Loic\n"
+		".Notes\n"
+		"Hello.\n"),
+	ok.
+
 %% Macros.
 
 rel_link(_) ->

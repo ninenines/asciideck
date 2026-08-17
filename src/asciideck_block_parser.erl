@@ -940,8 +940,81 @@ table_test() ->
 -endif.
 
 %% Asciidoc User Guide 28
--spec attribute_entry(_) -> no_return().
-attribute_entry(St) -> throw({not_implemented, St}). %% @todo
+attribute_entry(St) ->
+	%% Attribute entries begin with a colon hard against the left margin.
+	<<$:, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	{Name0, <<$:, Value0/bits>>} = while(fun(C) -> C =/= $: end, Line0),
+	true = Name0 =/= <<>>,
+	{Name1, Unset} = case Name0 of
+		<<>> ->
+			{Name0, false};
+		_ ->
+			PrefixLen = byte_size(Name0) - 1,
+			case Name0 of
+				<<Prefix:PrefixLen/binary, $!>> when Prefix =/= <<>> ->
+					{Prefix, true};
+				_ ->
+					{Name0, false}
+			end
+	end,
+	Name = sanitize_attr_name(Name1),
+	true = Name =/= <<>>,
+	Value = attribute_entry_value(St, Value0),
+	{attribute_entry, #{name => Name, unset => Unset}, Value, Ann}.
+
+sanitize_attr_name(Name) ->
+	<< <<(attr_name_char(C))/binary>> || <<C>> <= Name >>.
+
+attr_name_char(C) when C >= $A, C =< $Z -> <<(C + 32)>>;
+attr_name_char(C) when C >= $a, C =< $z; C >= $0, C =< $9; C =:= $-; C =:= $_ ->
+	<<C>>;
+attr_name_char(_) ->
+	<<>>.
+
+attribute_entry_value(St, Value0) ->
+	Value1 = trim(Value0, trailing),
+	Len = byte_size(Value1),
+	case Value1 of
+		<<Prefix:(Len - 2)/binary, $\s, $+>> when Len >= 2 ->
+			case read_line(St) of
+				eof ->
+					trim(Prefix);
+				Next ->
+					Continued = <<Prefix/binary, $\s, (trim(Next))/binary>>,
+					attribute_entry_value(St, Continued)
+			end;
+		_ ->
+			trim(Value1)
+	end.
+
+-ifdef(TEST).
+attribute_entry_test() ->
+	[{attribute_entry, #{name := <<"author">>, unset := false},
+		<<"Stuart Rackham">>, _}] = parse(<<":author: Stuart Rackham">>),
+	[{attribute_entry, #{name := <<"authorinitials">>, unset := false},
+		<<"JB">>, _}] = parse(<<":Author Initials: JB">>),
+	[{attribute_entry, #{name := <<"revnumber">>, unset := false},
+		<<"5.1.1">>, _}] = parse(<<":revnumber: 5.1.1">>),
+	%% Empty value.
+	[{attribute_entry, #{name := <<"toc">>, unset := false},
+		<<>>, _}] = parse(<<":toc:">>),
+	%% Unset an attribute.
+	[{attribute_entry, #{name := <<"toc">>, unset := true},
+		<<>>, _}] = parse(<<":toc!:">>),
+	%% Continuation lines end with space and plus.
+	[{attribute_entry, #{name := <<"description">>, unset := false},
+		<<"AsciiDoc is a text document format for writing notes, "
+		  "documentation, articles, books, slideshows, web pages "
+		  "and man pages.">>, _}] = parse(<<
+			":description: AsciiDoc is a text document format for writing notes, +\n"
+			"              documentation, articles, books, slideshows, web pages +\n"
+			"              and man pages.">>),
+	%% Must be hard against the left margin and have a closing colon.
+	?NOT(attribute_entry, parse(<<":author Stuart Rackham">>)),
+	?NOT(attribute_entry, parse(<<" :author: Stuart Rackham">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 14, 29
 attribute_list(St) ->

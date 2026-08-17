@@ -61,6 +61,7 @@ can_apply(list_item_continuation) -> drop;
 can_apply(block_id) -> skip;
 can_apply(attribute_list) -> skip;
 can_apply(block_title) -> skip;
+can_apply(attribute_entry) -> skip;
 %% Everything else is a block.
 can_apply(_) -> apply.
 
@@ -106,6 +107,21 @@ block_title_test() ->
 		{listing_block, #{
 			<<"title">> => <<"Title">>
 		}, <<"Hello!">>, #{line => 2}}
+	],
+	AST = run(AST0),
+	ok.
+
+attribute_entry_skip_test() ->
+	AST0 = [
+		{block_title, #{}, <<"Title">>, #{line => 1}},
+		{attribute_entry, #{name => <<"author">>, unset => false},
+			<<"Loic">>, #{line => 2}},
+		{paragraph, #{}, <<"Hello!">>, #{line => 3}}
+	],
+	AST = [
+		{attribute_entry, #{name => <<"author">>, unset => false},
+			<<"Loic">>, #{line => 2}},
+		{paragraph, #{<<"title">> => <<"Title">>}, <<"Hello!">>, #{line => 3}}
 	],
 	AST = run(AST0),
 	ok.

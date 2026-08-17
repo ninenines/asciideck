@@ -78,6 +78,7 @@ ast_node(Node={Type, _, _, _}) ->
 			table -> table(Node);
 			block_macro -> block_macro(Node);
 			comment_line -> comment_line(Node);
+			attribute_entry -> [];
 			_ -> ast_error({unknown_type, Node})
 		end
 	catch C:E:S ->
@@ -291,6 +292,16 @@ admonition_test() ->
 	<<"<div class=\"admonitionblock note\">"
 		"<div class=\"title\">Note</div>\n"
 		"<div class=\"content\">Be careful.</div></div>\n">> = HTML,
+	ok.
+
+attribute_entry_test() ->
+	AST = [
+		{attribute_entry, #{name => <<"author">>, unset => false},
+			<<"Loic">>, #{line => 1}},
+		{paragraph, #{}, <<"Hello.">>, #{line => 2}}
+	],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>Hello.</p>\n">> = HTML,
 	ok.
 
 literal_paragraph_test() ->

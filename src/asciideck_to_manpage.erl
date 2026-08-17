@@ -81,6 +81,7 @@ ast_node(Node={Type, _, _, _}) ->
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);
+			attribute_entry -> [];
 			_ ->
 				io:format("Ignored AST node ~p~n", [Node]),
 				[]

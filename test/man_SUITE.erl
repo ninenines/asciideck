@@ -29,6 +29,26 @@ missing_name_section(_) ->
 	{'EXIT', _} = (catch asciideck:to_manpage(AST)),
 	ok.
 
+attribute_entry(_) ->
+	doc("Attribute entries are omitted from man page output. (28)"),
+	AST = asciideck:parse(
+		"= attr(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"attr - test\n"
+		"\n"
+		":author: Loic Hoguin\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"Hello.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"Hello.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	nomatch = binary:match(Man, <<"Loic Hoguin">>),
+	ok.
+
 admonition_paragraph(_) ->
 	doc("Admonition paragraphs are rendered in man pages. (15.4)"),
 	AST = asciideck:parse(
