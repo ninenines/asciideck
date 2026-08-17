@@ -205,6 +205,9 @@ long_section_title(St) ->
 	Ann = ann(St),
 	false = ?IS_WS(C),
 	Title = trim(Title0),
+	%% A lone + is a list continuation; -- opens an open block.
+	false = Title =:= <<"+">>,
+	false = Title =:= <<"--">>,
 	%% Read the underline.
 	{Level, Char, Underline0} = case read_line(St) of
 		U = <<"=", _/bits >> -> {0, $=, U};
@@ -916,8 +919,64 @@ delimited_block_test() ->
 -endif.
 
 %% Asciidoc User Guide 16.10
--spec open_block(_) -> no_return().
-open_block(St) -> throw({not_implemented, St}). %% @todo
+%%
+%% Open blocks are delimited by a line of exactly two hyphens.
+%% Their contents are block elements, parsed like the rest of
+%% the document.
+open_block(St) ->
+	<<"--">> = trim(read_line(St), trailing),
+	Ann = ann(St),
+	Block = read_while(St, fun fold_open_block/1, <<>>),
+	%% Skip the closing delimiter when present.
+	_ = read_line(St),
+	Children = case Block of
+		<<>> -> [];
+		_ -> parse(Block)
+	end,
+	{open_block, #{}, Children, Ann}.
+
+fold_open_block(eof) ->
+	done;
+fold_open_block(Line0) ->
+	case trim(Line0, trailing) of
+		<<"--">> -> done;
+		_ -> {more, Line0}
+	end.
+
+-ifdef(TEST).
+open_block_test() ->
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _}
+	], _}] = parse(<<
+		"--\n"
+		"Hello!\n"
+		"--\n">>),
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _},
+		{paragraph, _, <<"World!">>, _}
+	], _}] = parse(<<
+		"--\n"
+		"Hello!\n"
+		"\n"
+		"World!\n"
+		"--\n">>),
+	%% Nested blocks are parsed.
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _},
+		{listing_block, _, <<"f() -> ok.">>, _}
+	], _}] = parse(<<
+		"--\n"
+		"Hello!\n"
+		"\n"
+		"----\n"
+		"f() -> ok.\n"
+		"----\n"
+		"--\n">>),
+	%% Must be exactly two hyphens, hard against the left margin.
+	?NOT(open_block, parse(<<"---\nHello!\n---\n">>)),
+	?NOT(open_block, parse(<<"  --\nHello!\n  --\n">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 23
 %%

@@ -42,6 +42,8 @@ run([{Type, Attrs0=#{1 := Style}, Text, Ann}|Tail])
 	%% Admonitions are not verbatim even if the body was indented.
 	Attrs = maps:remove(<<"subs">>, Attrs0#{style => Style}),
 	[{admonition, Attrs, Text, Ann}|run(Tail)];
+run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
 run([Block|Tail]) ->
 	[Block|run(Tail)].
 

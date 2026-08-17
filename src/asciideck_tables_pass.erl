@@ -28,6 +28,8 @@ run([]) ->
 	[];
 run([Table={table, _, _, _}|Tail]) ->
 	[table(Table)|run(Tail)];
+run([{open_block, Attrs, Children, Ann}|Tail]) ->
+	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
 run([Block|Tail]) ->
 	[Block|run(Tail)].
 

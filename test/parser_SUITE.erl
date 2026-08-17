@@ -365,6 +365,77 @@ admonition_paragraph_formatting(_) ->
 	], _}] = parse("NOTE: This is *important*."),
 	ok.
 
+%% Open blocks.
+
+open_block(_) ->
+	doc("Open blocks group block elements. (16.10)"),
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _}
+	], _}] = parse(
+		"--\n"
+		"Hello!\n"
+		"--\n"),
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _},
+		{paragraph, _, <<"World!">>, _}
+	], _}] = parse(
+		"--\n"
+		"Hello!\n"
+		"\n"
+		"World!\n"
+		"--\n"),
+	[{open_block, #{1 := <<"abstract">>}, [
+		{paragraph, _, <<"In this paper we will.">>, _}
+	], _}] = parse(
+		"[abstract]\n"
+		"--\n"
+		"In this paper we will.\n"
+		"--\n"),
+	[{open_block, #{<<"title">> := <<"Intro">>}, [
+		{paragraph, _, <<"Optional part introduction goes here.">>, _}
+	], _}] = parse(
+		".Intro\n"
+		"--\n"
+		"Optional part introduction goes here.\n"
+		"--\n"),
+	%% Inline formatting inside the open block.
+	[{open_block, _, [
+		{paragraph, _, [{strong, _, <<"Hello">>, _}, <<"!">>], _}
+	], _}] = parse(
+		"--\n"
+		"*Hello*!\n"
+		"--\n"),
+	%% Lists inside the open block are aggregated.
+	[{open_block, _, [
+		{list, #{type := bulleted}, [
+			{list_item, _, [{paragraph, _, <<"One">>, _}], _},
+			{list_item, _, [{paragraph, _, <<"Two">>, _}], _}
+		], _}
+	], _}] = parse(
+		"--\n"
+		"* One\n"
+		"* Two\n"
+		"--\n"),
+	%% Open blocks group list item continuation content.
+	[{list, #{type := bulleted}, [
+		{list_item, _, [
+			{paragraph, _, <<"item">>, _},
+			{open_block, _, [
+				{list, #{type := bulleted}, [
+					{list_item, _, [{paragraph, _, <<"nested">>, _}], _},
+					{list_item, _, [{paragraph, _, <<"items">>, _}], _}
+				], _}
+			], _}
+		], _}
+	], _}] = parse(
+		"* item\n"
+		"+\n"
+		"--\n"
+		"* nested\n"
+		"* items\n"
+		"--\n"),
+	ok.
+
 %% Listing blocks.
 
 listing(_) ->

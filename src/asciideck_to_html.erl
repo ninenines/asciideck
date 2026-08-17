@@ -74,6 +74,7 @@ ast_node(Node={Type, _, _, _}) ->
 			literal_block -> literal_paragraph(Node);
 			listing_block -> listing_block(Node);
 			passthrough_block -> passthrough_block(Node);
+			open_block -> open_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);
@@ -181,6 +182,28 @@ listing_block({listing_block, Attrs, Listing0, _}) ->
 
 passthrough_block({passthrough_block, _, HTML, _}) ->
 	HTML.
+
+%% Open blocks.
+
+open_block({open_block, Attrs, Children, _}) ->
+	Class = case Attrs of
+		#{1 := Style} ->
+			["openblock ", string:to_lower(binary_to_list(Style))];
+		_ ->
+			"openblock"
+	end,
+	[
+		"<div class=\"", Class, "\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		"<div class=\"content\">",
+		ast(Children),
+		"</div></div>\n"
+	].
 
 %% Lists.
 
@@ -292,6 +315,16 @@ admonition_test() ->
 	<<"<div class=\"admonitionblock note\">"
 		"<div class=\"title\">Note</div>\n"
 		"<div class=\"content\">Be careful.</div></div>\n">> = HTML,
+	ok.
+
+open_block_test() ->
+	AST = [{open_block, #{}, [
+		{paragraph, #{}, <<"Hello!">>, #{line => 2}}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"openblock\"><div class=\"content\">"
+		"<p>Hello!</p>\n"
+		"</div></div>\n">> = HTML,
 	ok.
 
 attribute_entry_test() ->

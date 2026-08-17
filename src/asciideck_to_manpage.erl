@@ -78,6 +78,7 @@ ast_node(Node={Type, _, _, _}) ->
 			literal_paragraph -> listing_block(Node);
 			literal_block -> listing_block(Node);
 			listing_block -> listing_block(Node);
+			open_block -> open_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);
@@ -123,6 +124,11 @@ admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
 
 admonition_label(<<C, Rest/bits>>) ->
 	[string:to_upper([C]), string:to_lower(binary_to_list(Rest))].
+
+%% Open blocks.
+
+open_block({open_block, _, Children, _}) ->
+	ast(Children).
 
 %% Listing blocks.
 

@@ -49,6 +49,8 @@ list([{list_item_continuation, _, _, _}], Acc) ->
 list([LI={list_item, Attrs, _, Ann}|Tail0], Acc) ->
 	{Items, Tail} = item(Tail0, LI, [type(Attrs)], []),
 	list(Tail, [{list, Attrs, Items, Ann}|Acc]);
+list([{open_block, Attrs, Children, Ann}|Tail], Acc) ->
+	list(Tail, [{open_block, Attrs, run(Children), Ann}|Acc]);
 list([Block|Tail], Acc) ->
 	list(Tail, [Block|Acc]).
 
@@ -81,7 +83,7 @@ item([LIC={list_item_continuation, _, _, _},
 item([{list_item_continuation, _, _, _}, LI={list_item, _, _, _}|Tail], CurrentLI, Parents, Acc) ->
 	item([LI|Tail], CurrentLI, Parents, Acc);
 item([{list_item_continuation, _, _, _}, Block|Tail], CurrentLI, Parents, Acc) ->
-	item(Tail, add_child(CurrentLI, Block), Parents, Acc);
+	item(Tail, add_child(CurrentLI, maybe_lists(Block)), Parents, Acc);
 %% A literal paragraph immediately following a list item is a child.
 item([LP={literal_paragraph, _, _, _}|Tail], CurrentLI, Parents, Acc) ->
 	item(Tail, add_child(CurrentLI, LP), Parents, Acc);
@@ -94,6 +96,11 @@ type(Attrs) ->
 
 add_child({list_item, Attrs, Children, Ann}, Child) ->
 	{list_item, Attrs, [Child|Children], Ann}.
+
+maybe_lists({open_block, Attrs, Children, Ann}) ->
+	{open_block, Attrs, run(Children), Ann};
+maybe_lists(Block) ->
+	Block.
 
 reverse_children({list_item, Attrs, Children, Ann}) ->
 	{list_item, Attrs, lists:reverse(Children), Ann}.

@@ -35,6 +35,8 @@ run([{block_title, _, Title, _}|Tail0]) ->
 run([{attribute_list, Attrs, <<>>, _}|Tail0]) ->
 	Tail = apply_attributes(Tail0, Attrs),
 	run(Tail);
+run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
 run([Block|Tail]) ->
 	[Block|run(Tail)].
 
