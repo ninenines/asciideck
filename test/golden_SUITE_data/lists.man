@@ -1,0 +1,108 @@
+.TH "golden_lists" "3" "2026-01-01" "" ""
+.ta T 4n
+\&
+.SH NAME
+.LP
+golden_lists - Lists
+.sp
+.SH BULLETED
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+Dash one
+.RE
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+Dash two
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+Star one
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+Nested star
+.RE
+.RE
+.RE
+.SH NUMBERED
+.ie n \{\
+.RS 4
+\h'-04' 1.\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP " 1." 4.2
+.\}
+First
+.RE
+.ie n \{\
+.RS 4
+\h'-04' 2.\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP " 2." 4.2
+.\}
+Second
+.ie n \{\
+.RS 4
+\h'-04' 1.\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP " 1." 4.2
+.\}
+Nested first
+.RE
+.ie n \{\
+.RS 4
+\h'-04' 2.\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP " 2." 4.2
+.\}
+Nested second
+.RE
+.RE
+.ie n \{\
+.RS 4
+\h'-04' 3.\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP " 3." 4.2
+.\}
+Third
+.RE
