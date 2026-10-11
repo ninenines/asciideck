@@ -1,0 +1,36 @@
+= golden_blocks(3)
+
+== Name
+
+golden_blocks - Delimited blocks
+
+== Blocks
+
+.Literal title
+....
+Literal <text>
+  kept as is.
+....
+
+////
+A comment block.
+////
+
+.Example title
+====
+An *example*.
+====
+
+****
+A sidebar.
+****
+
+[quote, Bertrand Russell, The World of Mathematics (1956)]
+____
+A quote.
+____
+
+[quote, Anonymous]
+____
+Another quote.
+____
