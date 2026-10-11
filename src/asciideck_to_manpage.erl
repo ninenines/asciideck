@@ -79,6 +79,7 @@ ast_node(Node={Type, _, _, _}) ->
 			example_block -> indented_block(Node);
 			sidebar_block -> indented_block(Node);
 			quote_block -> indented_block(Node);
+			open_block -> open_block(Node);
 			comment_block -> [];
 			list -> list(Node);
 			table -> table(Node);
@@ -129,6 +130,14 @@ verbatim(Attrs, Listing) ->
 		".RE\n"
 		".\\}\n"
 	].
+
+%% Open blocks.
+%%
+%% Their contents are not parsed as blocks yet
+%% and are rendered as a single paragraph.
+
+open_block({open_block, Attrs, Text, _}) ->
+	[block_title(Attrs), ".LP\n", inline(Text), "\n.sp\n"].
 
 %% Example, sidebar and quote blocks.
 %%
