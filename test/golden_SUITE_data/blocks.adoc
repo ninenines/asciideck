@@ -1,0 +1,11 @@
+= golden_blocks(3)
+
+== Name
+
+golden_blocks - Delimited blocks
+
+== Blocks
+
+```
+Fenced <code>
+```
