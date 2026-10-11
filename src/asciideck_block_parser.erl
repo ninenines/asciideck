@@ -952,7 +952,7 @@ attribute_list(St, AttrList0) ->
 	AttrList2 = trim(AttrList1),
 	Len = byte_size(AttrList2) - 1,
 	<<AttrList3:Len/binary, $]>> = AttrList2,
-	AttrList = asciideck_attributes_parser:parse(AttrList3),
+	AttrList = asciideck_attributes_parser:parse_block(AttrList3),
 	{attribute_list, AttrList, <<>>, ann(St)}.
 
 -ifdef(TEST).
