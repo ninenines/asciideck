@@ -12,8 +12,8 @@
 %% ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 %% OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-%% The purpose of this pass is to parse the contents of
-%% compound blocks (example, sidebar, quote and open blocks)
+%% The purpose of this pass is to parse the contents of compound
+%% blocks (example, sidebar, quote, open and admonition blocks)
 %% as a list of blocks. Line numbers of the child blocks are
 %% offset by the line of the compound block.
 -module(asciideck_compound_pass).
@@ -26,6 +26,9 @@ run([{Type, Attrs, Content, Ann}|Tail])
 		when is_binary(Content), (Type =:= example_block orelse Type =:= sidebar_block
 			orelse Type =:= quote_block orelse Type =:= open_block) ->
 	[{Type, Attrs, parse(Content, Ann), Ann}|run(Tail)];
+run([{admonition, Attrs, Content, Ann}|Tail])
+		when is_binary(Content), not is_map_key(paragraph, Attrs) ->
+	[{admonition, Attrs, parse(Content, Ann), Ann}|run(Tail)];
 %% List items may contain compound blocks.
 run([{Type, Attrs, Items, Ann}|Tail]) when is_list(Items) ->
 	[{Type, Attrs, run(Items), Ann}|run(Tail)];

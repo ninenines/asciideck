@@ -55,3 +55,22 @@ First paragraph.
 Nested example.
 ======
 ====
+
+[NOTE]
+====
+An admonition *block*.
+
+* With a list.
+====
+
+[TIP]
+A styled admonition paragraph.
+
+[quote, Someone]
+A quote paragraph.
+
+[verse, Poet, Poem]
+____
+Roses are red,
+  violets are <blue>.
+____

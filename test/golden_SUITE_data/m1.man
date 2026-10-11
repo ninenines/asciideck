@@ -181,3 +181,48 @@ Nested example.
 .sp
 .RE
 .sp
+.RS 4
+\fBNOTE\fR
+.br
+.LP
+An admonition \fBblock\fR.
+.sp
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+With a list.
+.RE
+.RE
+.sp
+.RS 4
+\fBTIP\fR
+.br
+A styled admonition paragraph.
+.RE
+.sp
+.RS 4
+.LP
+A quote paragraph.
+.sp
+.br
+\(em Someone
+.RE
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+Roses are red,
+  violets are <blue>.
+.fi
+.if n \{\
+.RE
+.\}
+\(em Poet, Poem
+.sp

@@ -81,6 +81,7 @@ ast_node(Node={Type, _, _, _}) ->
 			quote_block -> indented_block(Node);
 			open_block -> open_block(Node);
 			admonition -> admonition(Node);
+			verse_block -> verse_block(Node);
 			comment_block -> [];
 			thematic_break -> ".sp\n";
 			%% Man pages have no concept of page breaks.
@@ -159,6 +160,18 @@ admonition({admonition, Attrs=#{type := Type}, Content, _}) ->
 		end,
 		".RE\n"
 		".sp\n"
+	].
+
+%% Verse blocks.
+
+verse_block({verse_block, Attrs, Text, _}) ->
+	[
+		verbatim(Attrs, Text),
+		case Attrs of
+			#{2 := Author, 3 := Citation} -> ["\\(em ", inline(Author), ", ", inline(Citation), "\n.sp\n"];
+			#{2 := Author} -> ["\\(em ", inline(Author), "\n.sp\n"];
+			_ -> []
+		end
 	].
 
 %% Open blocks.

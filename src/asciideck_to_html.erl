@@ -93,6 +93,7 @@ ast_node(Node={Type, _, _, _}) ->
 			quote_block -> quote_block(Node);
 			open_block -> open_block(Node);
 			admonition -> admonition(Node);
+			verse_block -> verse_block(Node);
 			comment_block -> [];
 			thematic_break -> "<hr/>\n";
 			page_break -> "<div class=\"page-break\" style=\"break-after: page\"></div>\n";
@@ -204,6 +205,15 @@ quote_block({quote_block, Attrs, AST, _}) ->
 		"<div class=\"quoteblock\">",
 		block_title(Attrs),
 		"<blockquote>\n", ast(AST), "</blockquote>",
+		quote_attribution(Attrs),
+		"</div>\n"
+	].
+
+verse_block({verse_block, Attrs, Text, _}) ->
+	[
+		"<div class=\"verseblock\">",
+		block_title(Attrs),
+		"<pre class=\"verse\">", html_encode(Text), "</pre>",
 		quote_attribution(Attrs),
 		"</div>\n"
 	].
