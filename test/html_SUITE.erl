@@ -45,3 +45,12 @@ table_no_pipe(_) ->
 	{_, _} = binary:match(HTML, <<"<th>a,b</th>">>),
 	{_, _} = binary:match(HTML, <<"<td>c,d</td>">>),
 	ok.
+
+title(_) ->
+	doc("The document title is used as the HTML title."),
+	HTML1 = iolist_to_binary(asciideck:to_html(asciideck:parse(
+		"= The *cowboy* <manual>\n\nHello!\n"))),
+	{_, _} = binary:match(HTML1, <<"<title>The cowboy &lt;manual&gt;</title>">>),
+	HTML2 = iolist_to_binary(asciideck:to_html(asciideck:parse("Hello!\n"))),
+	{_, _} = binary:match(HTML2, <<"<title></title>">>),
+	ok.
