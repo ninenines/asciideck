@@ -34,3 +34,11 @@ ____
 ____
 Another quote.
 ____
+
+'''
+
+After the thematic break.
+
+<<<
+
+After the page break.
