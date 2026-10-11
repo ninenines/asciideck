@@ -6,13 +6,7 @@ m1 - Block level tests
 
 == Description
 
-.Compound
-====
-First paragraph.
+NOTE: An admonition
+paragraph.
 
-* A list inside.
-
-======
-Nested example.
-======
-====
+WARNING: Careful *now*.

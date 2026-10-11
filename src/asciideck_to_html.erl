@@ -76,6 +76,7 @@ ast_node(Node={Type, _, _, _}) ->
 			sidebar_block -> sidebar_block(Node);
 			quote_block -> quote_block(Node);
 			open_block -> open_block(Node);
+			admonition -> admonition(Node);
 			comment_block -> [];
 			list -> list(Node);
 			table -> table(Node);
@@ -198,6 +199,27 @@ block_title(#{<<"title">> := Title}) ->
 	["<div class=\"title\">", inline(Title), "</div>\n"];
 block_title(_) ->
 	[].
+
+%% Admonitions.
+
+admonition({admonition, Attrs=#{type := Type}, Content, _}) ->
+	TypeBin = atom_to_binary(Type),
+	[
+		"<aside class=\"admonition ", TypeBin, "\">",
+		block_title(Attrs),
+		"<strong class=\"label\">", admonition_label(Type), "</strong>",
+		case Attrs of
+			#{paragraph := true} -> ["<p>", inline(Content), "</p>"];
+			_ -> ["\n", ast(Content)]
+		end,
+		"</aside>\n"
+	].
+
+admonition_label(note) -> <<"Note">>;
+admonition_label(tip) -> <<"Tip">>;
+admonition_label(important) -> <<"Important">>;
+admonition_label(caution) -> <<"Caution">>;
+admonition_label(warning) -> <<"Warning">>.
 
 %% Passthrough blocks.
 
