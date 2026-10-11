@@ -37,6 +37,20 @@ table({table, Attrs, Contents, Ann}) ->
 	{table, Attrs, Children, Ann}.
 
 -ifdef(TEST).
+cell_leading_whitespace_test() ->
+	[{table, _, [
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"Type">>, _}], _},
+			{cell, _, [{paragraph, _, <<"Value">>, _}], _}
+		], _}
+	], _}] = run(asciideck_block_parser:parse(<<"|===\n| Type   |   Value\n|===\n">>)),
+	%% Lines that look like block titles or comments are text or removed.
+	[{table, _, Rows, _}] = run(asciideck_block_parser:parse(
+		<<"|===\n| .erl | one\n  two\n\nthree\n// comment\n|===\n">>)),
+	[<<".erl">>, <<"one">>, <<"two">>, <<"three">>] = [Text || {row, _, Cells, _} <- Rows,
+		{cell, _, Paras, _} <- Cells, {paragraph, _, Text, _} <- Paras],
+	ok.
+
 table_test() ->
 	{table, _, [
 		{row, _, [
@@ -235,14 +249,34 @@ split_cells(<<$|, R/bits>>, Cell, Acc) ->
 split_cells(<<C, R/bits>>, Cell, Acc) ->
 	split_cells(R, <<Cell/binary, C>>, Acc).
 
+%% Cell contents are paragraphs of text, separated by empty lines.
+%% Leading and trailing whitespace is not significant: it must not
+%% turn the contents into a literal paragraph, and lines like .erl
+%% are text, not block titles. Only AsciiDoc cells (the a style)
+%% have their contents parsed as blocks.
+parse_cell(Contents, Specs) ->
+	case re:run(Specs, "^[0-9.*+<>^]*a$") of
+		nomatch ->
+			%% Comment lines are removed.
+			Lines = [L || L <- binary:split(Contents, <<"\n">>, [global]),
+				re:run(L, "^//(?!/)") =:= nomatch],
+			Text = iolist_to_binary(lists:join($\n, Lines)),
+			Paras = re:split(string:trim(Text, both, " \t\n"), "\n[ \t]*\n", [{return, binary}]),
+			[{paragraph, #{}, iolist_to_binary(lists:join($\n,
+				[string:trim(L) || L <- binary:split(P, <<"\n">>, [global])])), #{line => 1}}
+				|| P <- Paras, string:trim(P) =/= <<>>];
+		_ ->
+			asciideck_block_parser:parse(Contents)
+	end.
+
 %% Malformed table (no pipe before cell). Process it like it is a single cell.
 do_parse_cells([Contents0], Acc) ->
-	Contents = asciideck_block_parser:parse(Contents0),
+	Contents = parse_cell(Contents0, <<>>),
 	%% @todo Annotations.
 	lists:reverse([{cell, #{specifiers => <<>>}, Contents, #{}}|Acc]);
 %% Last cell. There are no further cell specifiers.
 do_parse_cells([Specs, Contents0], Acc) ->
-	Contents = asciideck_block_parser:parse(Contents0),
+	Contents = parse_cell(Contents0, Specs),
 	%% @todo Annotations.
 	Cell = {cell, #{specifiers => Specs}, Contents, #{}},
 	lists:reverse([Cell|Acc]);
@@ -253,7 +287,7 @@ do_parse_cells([Specs, Contents0|Tail], Acc) ->
 	NextSpecs = <<>>, %% @todo find_r(Contents0, <<>>),
 	Len = byte_size(Contents0) - byte_size(NextSpecs),
 	<<Contents1:Len/binary, _/bits>> = Contents0,
-	Contents = asciideck_block_parser:parse(Contents1),
+	Contents = parse_cell(Contents1, Specs),
 	%% @todo Annotations.
 	Cell = {cell, #{specifiers => Specs}, Contents, #{}},
 	do_parse_cells([NextSpecs|Tail], [Cell|Acc]).

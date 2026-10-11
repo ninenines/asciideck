@@ -29,7 +29,7 @@
 %%   of the tree is not a problem.
 %%
 %% - Any literal paragraph following a list item is a
-%%   child of that list item. @todo
+%%   child of that list item.
 %%
 %% - Any other block can be included as a child by using
 %%   list continuations.
@@ -82,6 +82,9 @@ item([{list_item_continuation, _, _, _}, LI={list_item, _, _, _}|Tail], CurrentL
 	item([LI|Tail], CurrentLI, Parents, Acc);
 item([{list_item_continuation, _, _, _}, Block|Tail], CurrentLI, Parents, Acc) ->
 	item(Tail, add_child(CurrentLI, Block), Parents, Acc);
+%% Literal paragraphs following a list item are children.
+item([Lit={literal_block, #{paragraph := true}, _, _}|Tail], CurrentLI, Parents, Acc) ->
+	item(Tail, add_child(CurrentLI, Lit), Parents, Acc);
 %% Anything else is the end of the list.
 item(Tail, CurrentLI, _, Acc) ->
 	{lists:reverse([reverse_children(CurrentLI)|Acc]), Tail}.
@@ -96,6 +99,19 @@ reverse_children({list_item, Attrs, Children, Ann}) ->
 	{list_item, Attrs, lists:reverse(Children), Ann}.
 
 -ifdef(TEST).
+literal_para_child_test() ->
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, #{}, <<"Hello!">>, _},
+			{literal_block, #{paragraph := true}, <<"literal">>, _}
+		], _}
+	], _}] = run([
+		{list_item, #{type => bulleted, level => 1},
+			[{paragraph, #{}, <<"Hello!">>, #{line => 1}}], #{line => 1}},
+		{literal_block, #{paragraph => true}, <<"literal">>, #{line => 3}}
+	]),
+	ok.
+
 list_test() ->
 	[{list, #{type := bulleted, level := 1}, [
 		{list_item, #{type := bulleted, level := 1},

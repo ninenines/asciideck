@@ -238,7 +238,10 @@ table_contents_cells([FirstCell|Cells]) ->
 		[[":", table_contents_cell(Cell)] || Cell <- Cells]].
 
 table_contents_cell({cell, _, [{paragraph, _, Text, _}], _}) ->
-	["T{\n", inline(Text), "\nT}"].
+	["T{\n", inline(Text), "\nT}"];
+%% Other blocks are rendered as is inside the text block.
+table_contents_cell({cell, _, AST, _}) ->
+	["T{\n", ast(AST), "T}"].
 
 %% Comment lines are printed in the generated file
 %% but are not visible in viewers.

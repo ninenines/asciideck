@@ -1,0 +1,41 @@
+.TH "m1" "3" "2026-01-01" "" ""
+.ta T 4n
+\&
+.SH NAME
+.LP
+m1 - Block level tests
+.sp
+.SH DESCRIPTION
+.LP
+A paragraph.
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+A literal paragraph
+  keeps its *indentation*.
+.fi
+.if n \{\
+.RE
+.\}
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+List item.
+.if n \{\
+.RS 4
+.\}
+.nf
+Literal paragraph in the item.
+.fi
+.if n \{\
+.RE
+.\}
+.RE
