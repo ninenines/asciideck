@@ -151,9 +151,13 @@ list({list, #{type := numbered}, Items, _}) ->
 list({list, #{type := labeled}, Items, _}) ->
 	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"].
 
-list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
+list_item({list_item, Attrs, [{paragraph, _, Text, _}|AST], _}) ->
 	[
-		"<li>",
+		case Attrs of
+			#{checked := true} -> "<li class=\"checklist\"><input type=\"checkbox\" disabled checked/> ";
+			#{checked := false} -> "<li class=\"checklist\"><input type=\"checkbox\" disabled/> ";
+			_ -> "<li>"
+		end,
 		inline(Text), "\n",
 		ast(AST),
 		"</li>\n"

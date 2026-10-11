@@ -440,10 +440,28 @@ bulleted_list(St) ->
 		dash -> bulleted_alt;
 		star -> bulleted
 	end,
-	list_item(St, #{
+	{Attrs, ListItem1} = case ListItem of
+		<<"[ ]", C1, R1/bits>> when ?IS_WS(C1) -> {#{checked => false}, R1};
+		<<"[x]", C1, R1/bits>> when ?IS_WS(C1) -> {#{checked => true}, R1};
+		<<"[*]", C1, R1/bits>> when ?IS_WS(C1) -> {#{checked => true}, R1};
+		_ -> {#{}, ListItem}
+	end,
+	list_item(St, Attrs#{
 		type => Type,
 		level => Level
-	}, ListItem).
+	}, ListItem1).
+
+-ifdef(TEST).
+checklist_test() ->
+	[
+		{list_item, #{checked := false}, [{paragraph, _, <<"Todo.">>, _}], _},
+		{list_item, #{checked := true}, [{paragraph, _, <<"Done.">>, _}], _},
+		{list_item, #{checked := true}, [{paragraph, _, <<"Done too.">>, _}], _},
+		{list_item, Attrs, [{paragraph, _, <<"[y] Not a checkbox.">>, _}], _}
+	] = parse(<<"* [ ] Todo.\n* [x] Done.\n- [*] Done too.\n* [y] Not a checkbox.">>),
+	false = maps:is_key(checked, Attrs),
+	ok.
+-endif.
 
 -ifdef(TEST).
 bulleted_list_test() ->

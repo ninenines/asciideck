@@ -129,7 +129,7 @@ list({list, #{type := bulleted}, Items, _}) ->
 list({list, #{type := labeled}, Items, _}) ->
 	fold(Items, fun labeled_list_item/1).
 
-bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
+bulleted_list_item({list_item, Attrs, [{paragraph, _, Text, _}|AST], _}) ->
 	[
 		".ie n \\{\\\n"
 		".RS 2\n"
@@ -140,6 +140,11 @@ bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 		".sp -1\n"
 		".IP \\(bu 2.3\n"
 		".\\}\n",
+		case Attrs of
+			#{checked := true} -> "[x] ";
+			#{checked := false} -> "[ ] ";
+			_ -> []
+		end,
 		inline(Text), "\n",
 		ast(AST),
 		".RE\n"
