@@ -120,7 +120,10 @@ paragraph({paragraph, _, Text, _}) ->
 listing_block({listing_block, Attrs, Listing0, _}) ->
 	Listing = case Attrs of
 		#{1 := <<"source">>, 2 := _} ->
-			try asciideck_source_highlight:filter(Listing0, Attrs) catch C:E:S -> io:format("~p ~p ~p~n", [C, E, S]), exit(bad) end;
+			case asciideck_source_highlight:filter(Listing0, Attrs) of
+				{ok, Highlighted} -> Highlighted;
+				error -> ["<pre>", html_encode(Listing0), "</pre>"]
+			end;
 		_ ->
 			["<pre>", html_encode(Listing0), "</pre>"]
 	end,
