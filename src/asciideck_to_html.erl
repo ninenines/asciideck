@@ -18,7 +18,7 @@
 
 translate(AST, Opts) ->
 	Output0 = ast(AST),
-	Output1 = maybe_header_footer(Output0, Opts),
+	Output1 = maybe_header_footer(Output0, AST, Opts),
 	{CompressExt, Output} = case Opts of
 		#{compress := gzip} -> {".gz", zlib:gzip(Output1)};
 		_ -> {"", Output1}
@@ -35,21 +35,37 @@ translate(AST, Opts) ->
 			Output
 	end.
 
-maybe_header_footer(Body, #{no_header_footer := _}) ->
+maybe_header_footer(Body, _, #{no_header_footer := _}) ->
 	Body;
-maybe_header_footer(Body, _Opts) ->
+maybe_header_footer(Body, AST, _Opts) ->
 	[
 		"<!DOCTYPE html>\n"
 		"<html lang=\"en\">\n"
 		"<head>\n"
 		"<meta charset=\"utf-8\"/>\n"
-		"<title>TODO title</title>\n" %% @todo
+		"<title>", html_encode(document_title(AST)), "</title>\n"
 		"</head>\n"
 		"<body>\n",
 		Body,
 		"</body>\n"
 		"</html>\n"
 	].
+
+document_title([{section_title, #{level := 0}, Title, _}|_]) ->
+	plain_text(Title);
+document_title([{comment_line, _, _, _}|Tail]) ->
+	document_title(Tail);
+document_title(_) ->
+	<<>>.
+
+plain_text(Text) when is_binary(Text) ->
+	Text;
+plain_text({line_break, _, _, _}) ->
+	<<" ">>;
+plain_text({_, _, Text, _}) ->
+	plain_text(Text);
+plain_text(Text) when is_list(Text) ->
+	iolist_to_binary([plain_text(T) || T <- Text]).
 
 filename_from_ast([{section_title, #{level := 0}, Filename, _}|_]) ->
 	Filename.
