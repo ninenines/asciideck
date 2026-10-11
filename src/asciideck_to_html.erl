@@ -274,9 +274,13 @@ ol_attrs(#{style := Style, start := Start}) ->
 ol_attrs(_) ->
 	[].
 
-list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
+list_item({list_item, Attrs, [{paragraph, _, Text, _}|AST], _}) ->
 	[
-		"<li>",
+		case Attrs of
+			#{checked := true} -> "<li class=\"checklist\"><input type=\"checkbox\" disabled checked/> ";
+			#{checked := false} -> "<li class=\"checklist\"><input type=\"checkbox\" disabled/> ";
+			_ -> "<li>"
+		end,
 		inline(Text), "\n",
 		ast(AST),
 		"</li>\n"
