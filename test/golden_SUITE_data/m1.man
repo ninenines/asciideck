@@ -1,0 +1,40 @@
+.TH "m1" "3" "2026-01-01" "" ""
+.ta T 4n
+\&
+.SH NAME
+.LP
+m1 - Block level tests
+.sp
+.SH DESCRIPTION
+.if n \{\
+.RS 4
+.\}
+.nf
+start() -> (1)
+    ok. (2)
+.fi
+.if n \{\
+.RE
+.\}
+.ie n \{\
+.RS 4
+\h'-04' (1)\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP " (1)" 4.2
+.\}
+The function.
+.RE
+.ie n \{\
+.RS 4
+\h'-04' (2)\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP " (2)" 4.2
+.\}
+The result.
+.RE

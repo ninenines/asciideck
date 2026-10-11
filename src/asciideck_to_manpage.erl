@@ -108,6 +108,11 @@ paragraph({paragraph, _, Text, _}) ->
 
 %% Listing blocks.
 
+listing_block({listing_block, Attrs=#{callouts := _}, Listing, _}) ->
+	verbatim(Attrs, iolist_to_binary(lists:join($\n, [case Ns of
+		[] -> Line;
+		_ -> [Line, [[" (", integer_to_binary(N), ")"] || N <- Ns]]
+	end || {Line, Ns} <- asciideck_transform_pass:callout_lines(Listing)])));
 listing_block({listing_block, Attrs, Listing, _}) ->
 	verbatim(Attrs, Listing).
 
@@ -174,9 +179,13 @@ list({list, #{type := Type}, Items, _})
 list({list, Attrs=#{type := numbered}, Items, _}) ->
 	Style = maps:get(style, Attrs, arabic),
 	{_, Output} = lists:foldl(fun(Item, {N, Acc}) ->
-		{N + 1, [Acc, numbered_list_item(Item, number(Style, N))]}
+		{N + 1, [Acc, numbered_list_item(Item, [number(Style, N), "."])]}
 	end, {maps:get(start, Attrs, 1), []}, Items),
 	Output;
+list({list, #{type := callout}, Items, _}) ->
+	fold(Items, fun(Item={list_item, #{number := N}, _, _}) ->
+		numbered_list_item(Item, ["(", integer_to_binary(N), ")"])
+	end);
 list({list, #{type := labeled}, Items, _}) ->
 	fold(Items, fun labeled_list_item/1).
 
@@ -200,12 +209,12 @@ numbered_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}, Num) ->
 	[
 		".ie n \\{\\\n"
 		".RS 4\n"
-		"\\h'-04' ", Num, ".\\h'+01'\\c\n"
+		"\\h'-04' ", Num, "\\h'+01'\\c\n"
 		".\\}\n"
 		".el \\{\\\n"
 		".RS 4\n"
 		".sp -1\n"
-		".IP \" ", Num, ".\" 4.2\n"
+		".IP \" ", Num, "\" 4.2\n"
 		".\\}\n",
 		inline(Text), "\n",
 		ast(AST),
