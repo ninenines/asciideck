@@ -127,10 +127,11 @@ listing_block({listing_block, Attrs, Listing, _}) ->
 list({list, #{type := Type}, Items, _})
 		when Type =:= bulleted; Type =:= bulleted_alt ->
 	fold(Items, fun bulleted_list_item/1);
-list({list, #{type := numbered}, Items, _}) ->
+list({list, Attrs=#{type := numbered}, Items, _}) ->
+	Style = maps:get(style, Attrs, arabic),
 	{_, Output} = lists:foldl(fun(Item, {N, Acc}) ->
-		{N + 1, [Acc, numbered_list_item(Item, N)]}
-	end, {1, []}, Items),
+		{N + 1, [Acc, numbered_list_item(Item, number(Style, N))]}
+	end, {maps:get(start, Attrs, 1), []}, Items),
 	Output;
 list({list, #{type := labeled}, Items, _}) ->
 	fold(Items, fun labeled_list_item/1).
@@ -151,8 +152,7 @@ bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 		".RE\n"
 	].
 
-numbered_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}, N) ->
-	Num = integer_to_binary(N),
+numbered_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}, Num) ->
 	[
 		".ie n \\{\\\n"
 		".RS 4\n"
@@ -167,6 +167,24 @@ numbered_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}, N) ->
 		ast(AST),
 		".RE\n"
 	].
+
+number(arabic, N) -> integer_to_binary(N);
+number(loweralpha, N) when N >= 1, N =< 26 -> <<($a + N - 1)>>;
+number(upperalpha, N) when N >= 1, N =< 26 -> <<($A + N - 1)>>;
+number(lowerroman, N) -> string:lowercase(roman(N));
+number(upperroman, N) -> roman(N);
+number(_, N) -> integer_to_binary(N).
+
+roman(N) when N >= 1, N < 4000 ->
+	roman(N, [{1000, "M"}, {900, "CM"}, {500, "D"}, {400, "CD"}, {100, "C"},
+		{90, "XC"}, {50, "L"}, {40, "XL"}, {10, "X"}, {9, "IX"}, {5, "V"},
+		{4, "IV"}, {1, "I"}], <<>>);
+roman(N) ->
+	integer_to_binary(N).
+
+roman(0, _, Acc) -> Acc;
+roman(N, L=[{V, S}|_], Acc) when N >= V -> roman(N - V, L, <<Acc/binary, (list_to_binary(S))/binary>>);
+roman(N, [_|Tail], Acc) -> roman(N, Tail, Acc).
 
 labeled_list_item({list_item, #{label := Label}, [{paragraph, _, Text, _}|AST], _}) ->
 	[
