@@ -37,3 +37,11 @@ source_invalid_lang(_) ->
 	{_, _} = binary:match(HTML, <<"<pre>A &lt; B.</pre>">>),
 	false = filelib:is_file(Marker),
 	ok.
+
+table_no_pipe(_) ->
+	doc("Table lines without cell separators are rendered as cells."),
+	HTML = html("[format=csv]\n|===\na,b\nc,d\n|===\n", #{}),
+	nomatch = binary:match(HTML, <<"asciideck-error">>),
+	{_, _} = binary:match(HTML, <<"<th>a,b</th>">>),
+	{_, _} = binary:match(HTML, <<"<td>c,d</td>">>),
+	ok.
