@@ -6,7 +6,21 @@ m1 - Block level tests
 
 == Description
 
-NOTE: An admonition
-paragraph.
+[NOTE]
+====
+An admonition *block*.
 
-WARNING: Careful *now*.
+* With a list.
+====
+
+[TIP]
+A styled admonition paragraph.
+
+[quote, Someone]
+A quote paragraph.
+
+[verse, Poet, Poem]
+____
+Roses are red,
+  violets are <blue>.
+____
