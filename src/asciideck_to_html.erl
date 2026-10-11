@@ -71,6 +71,8 @@ ast_node(Node={Type, _, _, _}) ->
 			paragraph -> paragraph(Node);
 			listing_block -> listing_block(Node);
 			passthrough_block -> passthrough_block(Node);
+			thematic_break -> "<hr/>\n";
+			page_break -> "<div class=\"page-break\" style=\"break-after: page\"></div>\n";
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);

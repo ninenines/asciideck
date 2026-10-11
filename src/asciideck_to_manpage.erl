@@ -75,6 +75,9 @@ ast_node(Node={Type, _, _, _}) ->
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
 			listing_block -> listing_block(Node);
+			thematic_break -> ".sp\n";
+			%% Man pages have no concept of page breaks.
+			page_break -> [];
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);

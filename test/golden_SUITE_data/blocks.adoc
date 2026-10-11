@@ -1,0 +1,15 @@
+= golden_blocks(3)
+
+== Name
+
+golden_blocks - Delimited blocks
+
+== Blocks
+
+'''
+
+After the thematic break.
+
+<<<
+
+After the page break.
