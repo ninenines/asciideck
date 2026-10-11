@@ -310,12 +310,46 @@ strong(Data, Prev) ->
 
 quoted_text(<<Left, Rest0/bits>>, Prev, Type, Left, Right) when ?IS_BOUNDARY(Prev) ->
 	{Content, <<Right, Rest/bits>>} = while(fun(C) -> C =/= Right end, Rest0),
+	true = is_constrained(Content, Rest),
 	{ok, {Type, #{
 		left => Left,
 		right => Right
 	}, inline(Content), inline}, Rest}.
 
+%% Constrained quoted text must not be empty, must not begin
+%% or end with whitespace and must not be followed by a word
+%% character.
+is_constrained(<<>>, _) ->
+	false;
+is_constrained(Content = <<First, _/bits>>, Rest) ->
+	Last = binary:last(Content),
+	not is_space(First) andalso not is_space(Last) andalso case Rest of
+		<<>> -> true;
+		<<Next, _/bits>> -> not is_word_char(Next)
+	end.
+
+is_space(C) ->
+	C =:= $\s orelse C =:= $\t orelse C =:= $\r orelse C =:= $\n.
+
+is_word_char(C) ->
+	(C >= $a andalso C =< $z)
+	orelse (C >= $A andalso C =< $Z)
+	orelse (C >= $0 andalso C =< $9)
+	orelse C =:= $_
+	orelse C >= 128.
+
 -ifdef(TEST).
+quoted_text_constrained_test() ->
+	<<"``">> = inline(<<"``">>),
+	<<"****">> = inline(<<"****">>),
+	<<"**un**constrained">> = inline(<<"**un**constrained">>),
+	<<"* not strong *">> = inline(<<"* not strong *">>),
+	<<"*not*strong">> = inline(<<"*not*strong">>),
+	<<"``">> = inline(<<"``">>),
+	[{emphasized, _, <<"path/to/file">>, _}, <<".">>] = inline(<<"'path/to/file'.">>),
+	[<<"See ">>, {strong, _, <<"this">>, _}] = inline(<<"See *this*">>),
+	ok.
+
 emphasized_test() ->
 	[
 		<<"Word phrases ">>,
@@ -347,6 +381,7 @@ strong_test() ->
 %% Asciidoc User Guide 21.4
 inline_literal_passthrough(<<"`", Rest0/bits>>, Prev) when ?IS_BOUNDARY(Prev) ->
 	{Content, <<"`", Rest/bits>>} = while(fun(C) -> C =/= $` end, Rest0),
+	true = is_constrained(Content, Rest),
 	{ok, {inline_literal_passthrough, #{}, Content, inline}, Rest}.
 
 -ifdef(TEST).
