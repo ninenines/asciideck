@@ -741,8 +741,23 @@ labeled_list_test() ->
 -endif.
 
 %% Asciidoc User Guide 20
--spec callout_list(_) -> no_return().
-callout_list(St) -> throw({not_implemented, St}). %% @todo
+callout_list(St) ->
+	<<"<", Line/bits>> = trim(read_line(St)),
+	{Num, <<">", C, ListItem/bits>>} = while(fun(C) -> C >= $0 andalso C =< $9 end, Line),
+	true = ?IS_WS(C),
+	true = Num =/= <<>>,
+	list_item(St, #{type => callout, level => 1, number => binary_to_integer(Num)}, ListItem).
+
+-ifdef(TEST).
+callout_list_test() ->
+	[
+		{list_item, #{type := callout, number := 1}, [{paragraph, _, <<"First.">>, _}], _},
+		{list_item, #{type := callout, number := 2}, [{paragraph, _, <<"Second.">>, _}], _}
+	] = parse(<<"<1> First.\n<2> Second.">>),
+	?NOT(list_item, parse(<<"<1>First.">>)),
+	?NOT(list_item, parse(<<"<x> First.">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 17
 %%
@@ -794,7 +809,7 @@ fold_list_item(Line0) ->
 		<<"....", C, _/bits>> when ?IS_WS(C) -> done;
 		<<".....", C, _/bits>> when ?IS_WS(C) -> done;
 		Line ->
-			case is_explicit_marker(Line) of
+			case is_explicit_marker(Line) orelse is_callout_marker(Line) of
 				true -> done;
 				false ->
 					try find_labeled_list(Line) of
@@ -1323,7 +1338,10 @@ is_list_marker(<<"..", C, _/bits>>) when ?IS_WS(C) -> true;
 is_list_marker(<<"...", C, _/bits>>) when ?IS_WS(C) -> true;
 is_list_marker(<<"....", C, _/bits>>) when ?IS_WS(C) -> true;
 is_list_marker(<<".....", C, _/bits>>) when ?IS_WS(C) -> true;
-is_list_marker(Line) -> is_explicit_marker(Line).
+is_list_marker(Line) -> is_explicit_marker(Line) orelse is_callout_marker(Line).
+
+is_callout_marker(Line) ->
+	re:run(Line, "^<\\d+>[ \\t]") =/= nomatch.
 
 %% Delimiter lines of delimited blocks, open blocks and fences.
 is_delimiter(Line0) ->

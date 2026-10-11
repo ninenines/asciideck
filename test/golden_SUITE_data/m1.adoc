@@ -74,3 +74,10 @@ ____
 Roses are red,
   violets are <blue>.
 ____
+
+----
+start() -> <1>
+    ok. <2>
+----
+<1> The function.
+<2> The result.

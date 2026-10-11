@@ -148,10 +148,10 @@ listing_block({listing_block, Attrs, Listing0, _}) ->
 		#{1 := <<"source">>, 2 := _} ->
 			case asciideck_source_highlight:filter(Listing0, Attrs) of
 				{ok, Highlighted} -> Highlighted;
-				error -> ["<pre>", html_encode(Listing0), "</pre>"]
+				error -> ["<pre>", listing_text(Attrs, Listing0), "</pre>"]
 			end;
 		_ ->
-			["<pre>", html_encode(Listing0), "</pre>"]
+			["<pre>", listing_text(Attrs, Listing0), "</pre>"]
 	end,
 	[
 		"<div class=\"listingblock\">",
@@ -165,6 +165,15 @@ listing_block({listing_block, Attrs, Listing0, _}) ->
 		Listing,
 		"</div></div>\n"
 	].
+
+%% Callout markers are replaced by their number.
+listing_text(#{callouts := _}, Text) ->
+	lists:join($\n, [case Ns of
+		[] -> html_encode(Line);
+		_ -> [html_encode(Line), [[" <b class=\"conum\">(", integer_to_binary(N), ")</b>"] || N <- Ns]]
+	end || {Line, Ns} <- asciideck_transform_pass:callout_lines(Text)]);
+listing_text(_, Text) ->
+	html_encode(Text).
 
 %% Literal blocks.
 
@@ -264,12 +273,22 @@ list({list, #{type := Type}, Items, _})
 	["<ul>", fold(Items, fun list_item/1), "</ul>\n"];
 list({list, Attrs=#{type := numbered}, Items, _}) ->
 	["<ol", ol_attrs(Attrs), ">", fold(Items, fun list_item/1), "</ol>\n"];
+list({list, #{type := callout}, Items, _}) ->
+	["<ol class=\"callouts\">", fold(Items, fun callout_list_item/1), "</ol>\n"];
 list({list, #{type := labeled, 1 := <<"qanda">>}, Items, _}) ->
 	["<ol class=\"qanda\">", fold(Items, fun qanda_list_item/1), "</ol>\n"];
 list({list, #{type := labeled, 1 := <<"horizontal">>}, Items, _}) ->
 	["<dl class=\"horizontal\">", fold(Items, fun labeled_list_item/1), "</dl>\n"];
 list({list, #{type := labeled}, Items, _}) ->
 	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"].
+
+callout_list_item({list_item, #{number := N}, [{paragraph, _, Text, _}|AST], _}) ->
+	[
+		"<li value=\"", integer_to_binary(N), "\">",
+		inline(Text), "\n",
+		ast(AST),
+		"</li>\n"
+	].
 
 qanda_list_item({list_item, #{label := Label}, AST, _}) ->
 	[
