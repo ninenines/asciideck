@@ -1161,8 +1161,32 @@ literal_para_test() ->
 -endif.
 
 %% Asciidoc User Guide 15.4
--spec admonition_para(_) -> no_return().
-admonition_para(St) -> throw({not_implemented, St}). %% @todo
+admonition_para(St) ->
+	<<C, _/bits>> = Para0 = read_line(St),
+	Ann = ann(St),
+	false = ?IS_WS(C),
+	{Type, Para1} = case Para0 of
+		<<"NOTE:", C1, R/bits>> when ?IS_WS(C1) -> {note, R};
+		<<"TIP:", C1, R/bits>> when ?IS_WS(C1) -> {tip, R};
+		<<"IMPORTANT:", C1, R/bits>> when ?IS_WS(C1) -> {important, R};
+		<<"CAUTION:", C1, R/bits>> when ?IS_WS(C1) -> {caution, R};
+		<<"WARNING:", C1, R/bits>> when ?IS_WS(C1) -> {warning, R}
+	end,
+	Para = read_while(St, fun fold_para/1, trim(Para1)),
+	{admonition, #{type => Type, paragraph => true}, Para, Ann}.
+
+-ifdef(TEST).
+admonition_para_test() ->
+	[{admonition, #{type := note, paragraph := true}, <<"Hello\nworld.">>, #{line := 1}}]
+		= parse(<<"NOTE: Hello\nworld.">>),
+	[{admonition, #{type := tip}, _, _}] = parse(<<"TIP: x">>),
+	[{admonition, #{type := important}, _, _}] = parse(<<"IMPORTANT: x">>),
+	[{admonition, #{type := caution}, _, _}] = parse(<<"CAUTION: x">>),
+	[{admonition, #{type := warning}, _, _}] = parse(<<"WARNING: x">>),
+	?NOT(admonition, parse(<<"NOTE:x">>)),
+	?NOT(admonition, parse(<<"Note: x">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 15.1
 para(St) ->

@@ -39,3 +39,15 @@ Literal paragraph in the item.
 .RE
 .\}
 .RE
+.RS 4
+\fBNOTE\fR
+.br
+An admonition paragraph.
+.RE
+.sp
+.RS 4
+\fBWARNING\fR
+.br
+Careful \fBnow\fR.
+.RE
+.sp

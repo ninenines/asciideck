@@ -80,6 +80,7 @@ ast_node(Node={Type, _, _, _}) ->
 			sidebar_block -> indented_block(Node);
 			quote_block -> indented_block(Node);
 			open_block -> open_block(Node);
+			admonition -> admonition(Node);
 			comment_block -> [];
 			thematic_break -> ".sp\n";
 			%% Man pages have no concept of page breaks.
@@ -142,6 +143,22 @@ verbatim(Attrs, Listing) ->
 		".if n \\{\\\n"
 		".RE\n"
 		".\\}\n"
+	].
+
+%% Admonitions.
+
+admonition({admonition, Attrs=#{type := Type}, Content, _}) ->
+	[
+		block_title(Attrs),
+		".RS 4\n"
+		"\\fB", string:uppercase(atom_to_list(Type)), "\\fR\n"
+		".br\n",
+		case Attrs of
+			#{paragraph := true} -> [inline(Content), "\n"];
+			_ -> ast(Content)
+		end,
+		".RE\n"
+		".sp\n"
 	].
 
 %% Open blocks.

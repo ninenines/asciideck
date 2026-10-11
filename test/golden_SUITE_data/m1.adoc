@@ -15,3 +15,7 @@ A paragraph.
 
   Literal paragraph in the item.
 
+NOTE: An admonition
+paragraph.
+
+WARNING: Careful *now*.
