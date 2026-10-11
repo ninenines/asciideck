@@ -483,21 +483,91 @@ bulleted_list_test() ->
 
 %% Asciidoc User Guide 17.2
 %%
-%% We currently only implement implicit numbering.
+%% Explicit markers (1. a. A. i) I)) give the list a style
+%% and a start number. The level is derived from the style
+%% using the same order as implicit numbering.
 numbered_list(St) ->
 	Line0 = read_line(St),
 	Line1 = trim(Line0),
-	{Level, ListItem} = case Line1 of
-		<<".", C, R/bits>> when ?IS_WS(C) -> {1, R};
-		<<"..", C, R/bits>> when ?IS_WS(C) -> {2, R};
-		<<"...", C, R/bits>> when ?IS_WS(C) -> {3, R};
-		<<"....", C, R/bits>> when ?IS_WS(C) -> {4, R};
-		<<".....", C, R/bits>> when ?IS_WS(C) -> {5, R}
+	Attrs = case Line1 of
+		<<".", C, R/bits>> when ?IS_WS(C) -> #{level => 1, item => R};
+		<<"..", C, R/bits>> when ?IS_WS(C) -> #{level => 2, item => R};
+		<<"...", C, R/bits>> when ?IS_WS(C) -> #{level => 3, item => R};
+		<<"....", C, R/bits>> when ?IS_WS(C) -> #{level => 4, item => R};
+		<<".....", C, R/bits>> when ?IS_WS(C) -> #{level => 5, item => R};
+		_ ->
+			{Style, Start, R} = explicit_marker(Line1),
+			#{level => style_level(Style), style => Style, start => Start, item => R}
 	end,
-	list_item(St, #{
-		type => numbered,
-		level => Level
-	}, ListItem).
+	{ListItem, Attrs1} = maps:take(item, Attrs),
+	list_item(St, Attrs1#{type => numbered}, ListItem).
+
+explicit_marker(Line) ->
+	{Marker, <<Sep, C, R/bits>>} = while(fun(C) ->
+		(C >= $0 andalso C =< $9) orelse (C >= $a andalso C =< $z)
+		orelse (C >= $A andalso C =< $Z)
+	end, Line),
+	true = ?IS_WS(C),
+	true = Marker =/= <<>>,
+	{Style, Start} = case {Sep, Marker} of
+		{$., _} -> explicit_dot_marker(Marker);
+		{$), _} -> {roman_style(Marker), roman_to_int(string:lowercase(Marker))}
+	end,
+	{Style, Start, R}.
+
+explicit_dot_marker(<<C>>) when C >= $a, C =< $z -> {loweralpha, C - $a + 1};
+explicit_dot_marker(<<C>>) when C >= $A, C =< $Z -> {upperalpha, C - $A + 1};
+explicit_dot_marker(Marker) -> {arabic, binary_to_integer(Marker)}.
+
+roman_style(Marker) ->
+	case string:lowercase(Marker) of
+		Marker -> lowerroman;
+		_ ->
+			Marker = string:uppercase(Marker),
+			upperroman
+	end.
+
+roman_to_int(Roman) ->
+	Values = [case C of $i -> 1; $v -> 5; $x -> 10; $l -> 50; $c -> 100 end
+		|| <<C>> <= Roman],
+	roman_to_int(Values, 0).
+
+roman_to_int([], Acc) -> Acc;
+roman_to_int([A, B|Tail], Acc) when A < B -> roman_to_int(Tail, Acc + B - A);
+roman_to_int([A|Tail], Acc) -> roman_to_int(Tail, Acc + A).
+
+style_level(arabic) -> 1;
+style_level(loweralpha) -> 2;
+style_level(lowerroman) -> 3;
+style_level(upperalpha) -> 4;
+style_level(upperroman) -> 5.
+
+is_explicit_marker(Line) ->
+	try explicit_marker(Line) of
+		_ -> true
+	catch _:_ ->
+		false
+	end.
+
+-ifdef(TEST).
+explicit_numbered_list_test() ->
+	[{list_item, #{type := numbered, level := 1, style := arabic, start := 1},
+		[{paragraph, _, <<"One.">>, _}], _}] = parse(<<"1. One.">>),
+	[{list_item, #{level := 1, style := arabic, start := 10}, _, _}] = parse(<<"10. Ten.">>),
+	[{list_item, #{level := 2, style := loweralpha, start := 2}, _, _}] = parse(<<"b. Bee.">>),
+	[{list_item, #{level := 4, style := upperalpha, start := 1}, _, _}] = parse(<<"A. A.">>),
+	[{list_item, #{level := 3, style := lowerroman, start := 4}, _, _}] = parse(<<"iv) Four.">>),
+	[{list_item, #{level := 5, style := upperroman, start := 9}, _, _}] = parse(<<"IX) Nine.">>),
+	[
+		{list_item, #{style := arabic, start := 1}, [{paragraph, _, <<"One.">>, _}], _},
+		{list_item, #{style := arabic, start := 2}, [{paragraph, _, <<"Two.">>, _}], _}
+	] = parse(<<"1. One.\n2. Two.">>),
+	?NOT(list_item, parse(<<"1.One.">>)),
+	?NOT(list_item, parse(<<"ab. Not a list.">>)),
+	?NOT(list_item, parse(<<"Iv) Not a list.">>)),
+	?NOT(list_item, parse(<<"x1) Not a list.">>)),
+	ok.
+-endif.
 
 -ifdef(TEST).
 numbered_list_test() ->
@@ -677,10 +747,14 @@ fold_list_item(Line0) ->
 		<<"....", C, _/bits>> when ?IS_WS(C) -> done;
 		<<".....", C, _/bits>> when ?IS_WS(C) -> done;
 		Line ->
-			try find_labeled_list(Line) of
-				{_, _, _} -> done
-			catch _:_ ->
-				{more, Line}
+			case is_explicit_marker(Line) of
+				true -> done;
+				false ->
+					try find_labeled_list(Line) of
+						{_, _, _} -> done
+					catch _:_ ->
+						{more, Line}
+					end
 			end
 	end.
 

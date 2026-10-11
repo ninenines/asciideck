@@ -147,10 +147,24 @@ passthrough_block({passthrough_block, _, HTML, _}) ->
 list({list, #{type := Type}, Items, _})
 		when Type =:= bulleted; Type =:= bulleted_alt ->
 	["<ul>", fold(Items, fun list_item/1), "</ul>\n"];
-list({list, #{type := numbered}, Items, _}) ->
-	["<ol>", fold(Items, fun list_item/1), "</ol>\n"];
+list({list, Attrs=#{type := numbered}, Items, _}) ->
+	["<ol", ol_attrs(Attrs), ">", fold(Items, fun list_item/1), "</ol>\n"];
 list({list, #{type := labeled}, Items, _}) ->
 	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"].
+
+ol_attrs(#{style := Style, start := Start}) ->
+	[case Style of
+		arabic -> [];
+		loweralpha -> " type=\"a\"";
+		upperalpha -> " type=\"A\"";
+		lowerroman -> " type=\"i\"";
+		upperroman -> " type=\"I\""
+	end, case Start of
+		1 -> [];
+		_ -> [" start=\"", integer_to_binary(Start), "\""]
+	end];
+ol_attrs(_) ->
+	[].
 
 list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
