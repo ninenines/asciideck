@@ -42,3 +42,7 @@ After the thematic break.
 <<<
 
 After the page break.
+
+```
+Fenced <code>
+```
