@@ -52,6 +52,10 @@ list([LI={list_item, Attrs, _, Ann}|Tail0], Acc) ->
 list([Block|Tail], Acc) ->
 	list(Tail, [Block|Acc]).
 
+%% A list item with a style (from a block attribute list)
+%% starts a new list.
+item(FullTail=[{list_item, #{1 := _}, _, _}|_], CurrentLI, _, Acc) ->
+	{lists:reverse([reverse_children(CurrentLI)|Acc]), FullTail};
 %% Bulleted/numbered list item of the same type.
 item([NextLI={list_item, #{type := T, level := L}, _, _}|Tail],
 		CurrentLI={list_item, #{type := T, level := L}, _, _}, Parents, Acc) ->
@@ -99,6 +103,20 @@ reverse_children({list_item, Attrs, Children, Ann}) ->
 	{list_item, Attrs, lists:reverse(Children), Ann}.
 
 -ifdef(TEST).
+style_starts_new_list_test() ->
+	[
+		{list, #{1 := <<"qanda">>}, [_, _], _},
+		{list, #{1 := <<"horizontal">>}, [_], _}
+	] = run([
+		{list_item, #{type => labeled, separator => <<"::">>, label => <<"A">>, 1 => <<"qanda">>},
+			[{paragraph, #{}, <<"1">>, #{line => 1}}], #{line => 1}},
+		{list_item, #{type => labeled, separator => <<"::">>, label => <<"B">>},
+			[{paragraph, #{}, <<"2">>, #{line => 2}}], #{line => 2}},
+		{list_item, #{type => labeled, separator => <<"::">>, label => <<"C">>, 1 => <<"horizontal">>},
+			[{paragraph, #{}, <<"3">>, #{line => 4}}], #{line => 4}}
+	]),
+	ok.
+
 literal_para_child_test() ->
 	[{list, _, [
 		{list_item, _, [

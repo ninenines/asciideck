@@ -141,3 +141,18 @@ Ten.
 .RE
 .SH SHORTHAND
 .SH QUOTED
+.PP
+1. \fIWhat is it?\fR
+.RS 4
+A test.
+.RE
+.PP
+2. \fIWhy?\fR
+.RS 4
+Because.
+.RE
+.PP
+\fBKey\fR
+.RS 4
+Value.
+.RE
