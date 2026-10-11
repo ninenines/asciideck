@@ -1,0 +1,20 @@
+.TH "m1" "3" "2026-01-01" "" ""
+.ta T 4n
+\&
+.SH NAME
+.LP
+m1 - Block level tests
+.sp
+.SH DESCRIPTION
+.RS 4
+\fBNOTE\fR
+.br
+An admonition paragraph.
+.RE
+.sp
+.RS 4
+\fBWARNING\fR
+.br
+Careful \fBnow\fR.
+.RE
+.sp
