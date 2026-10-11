@@ -144,7 +144,8 @@ passthrough_block({passthrough_block, _, HTML, _}) ->
 
 %% Lists.
 
-list({list, #{type := bulleted}, Items, _}) ->
+list({list, #{type := Type}, Items, _})
+		when Type =:= bulleted; Type =:= bulleted_alt ->
 	["<ul>", fold(Items, fun list_item/1), "</ul>\n"];
 list({list, #{type := numbered}, Items, _}) ->
 	["<ol>", fold(Items, fun list_item/1), "</ol>\n"];

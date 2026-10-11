@@ -1,0 +1,21 @@
+= golden_lists(3)
+
+== Name
+
+golden_lists - Lists
+
+== Bulleted
+
+- Dash one
+- Dash two
+
+* Star one
+** Nested star
+
+== Numbered
+
+. First
+. Second
+.. Nested first
+.. Nested second
+. Third
