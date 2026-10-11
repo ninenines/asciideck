@@ -1,0 +1,13 @@
+.TH "golden_blocks" "3" "2026-01-01" "" ""
+.ta T 4n
+\&
+.SH NAME
+.LP
+golden_blocks - Delimited blocks
+.sp
+.SH BLOCKS
+.PP
+\fBOpen title\fR
+.LP
+An \fBopen\fR block.
+.sp

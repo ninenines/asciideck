@@ -132,23 +132,17 @@ verbatim(Attrs, Listing) ->
 	].
 
 %% Open blocks.
-%%
-%% Their contents are not parsed as blocks yet
-%% and are rendered as a single paragraph.
 
-open_block({open_block, Attrs, Text, _}) ->
-	[block_title(Attrs), ".LP\n", inline(Text), "\n.sp\n"].
+open_block({open_block, Attrs, AST, _}) ->
+	[block_title(Attrs), ast(AST)].
 
 %% Example, sidebar and quote blocks.
-%%
-%% Their contents are not parsed as blocks yet
-%% and are rendered as a single indented paragraph.
 
-indented_block({Type, Attrs, Text, _}) ->
+indented_block({Type, Attrs, AST, _}) ->
 	[
 		block_title(Attrs),
 		".RS 4\n",
-		inline(Text), "\n",
+		ast(AST),
 		case {Type, Attrs} of
 			{quote_block, #{2 := Author, 3 := Citation}} ->
 				[".br\n\\(em ", inline(Author), ", ", inline(Citation), "\n"];

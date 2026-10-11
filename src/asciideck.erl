@@ -49,6 +49,7 @@ parse(Data, _St) ->
 		asciideck_transform_pass,
 		asciideck_lists_pass,
 		asciideck_tables_pass,
+		asciideck_compound_pass,
 		asciideck_inline_pass
 	],
 	lists:foldl(fun(M, AST) -> M:run(AST) end,
