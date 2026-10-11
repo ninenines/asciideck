@@ -7,36 +7,7 @@ golden_blocks - Delimited blocks
 .sp
 .SH BLOCKS
 .PP
-\fBLiteral title\fR
-.if n \{\
-.RS 4
-.\}
-.nf
-Literal <text>
-  kept as is.
-.fi
-.if n \{\
-.RE
-.\}
-.PP
-\fBExample title\fR
-.RS 4
-An \fBexample\fR.
-.RE
-.sp
-.RS 4
-A sidebar.
-.RE
-.sp
-.RS 4
-A quote.
-.br
-\(em Bertrand Russell, The World of Mathematics (1956)
-.RE
-.sp
-.RS 4
-Another quote.
-.br
-\(em Anonymous
-.RE
+\fBOpen title\fR
+.LP
+An \fBopen\fR block.
 .sp
