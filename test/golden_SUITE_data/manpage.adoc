@@ -1,0 +1,30 @@
+= golden_man(3)
+
+== Name
+
+golden_man - Golden manual page
+
+== Description
+
+A *manual* page with a `literal` and a
+link:https://ninenines.eu[link].
+
+== Arguments
+
+Arg1::
+
+The first argument.
+
+=== Subsection
+
+* One
+* Two
+
+----
+f() -> ok.
+----
+
+|===
+|Name |Value
+|a |1
+|===

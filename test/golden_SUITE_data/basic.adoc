@@ -1,0 +1,44 @@
+= Basic document
+
+== Paragraphs
+
+A paragraph with *strong*, _emphasized_, 'emphasized'
+and `literal` text, a link:https://ninenines.eu[link],
+an xref:paragraphs[xref] and a line break +
+right there.
+
+// A comment line.
+
+== Lists
+
+* One
+* Two
+** Two and a half
+* Three
+
+. First
+. Second
+
+Term:: Definition.
+Other term::
+  Other definition.
+
+== Blocks
+
+.Listing title
+----
+f() -> ok.
+----
+
+++++
+<p>Passthrough.</p>
+++++
+
+== Table
+
+|===
+|A |B
+|1 |2
+|===
+
+image::image.png[An image]
