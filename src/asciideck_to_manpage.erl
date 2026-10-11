@@ -80,6 +80,9 @@ ast_node(Node={Type, _, _, _}) ->
 			sidebar_block -> indented_block(Node);
 			quote_block -> indented_block(Node);
 			comment_block -> [];
+			thematic_break -> ".sp\n";
+			%% Man pages have no concept of page breaks.
+			page_break -> [];
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);

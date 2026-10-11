@@ -76,6 +76,8 @@ ast_node(Node={Type, _, _, _}) ->
 			sidebar_block -> sidebar_block(Node);
 			quote_block -> quote_block(Node);
 			comment_block -> [];
+			thematic_break -> "<hr/>\n";
+			page_break -> "<div class=\"page-break\" style=\"break-after: page\"></div>\n";
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);

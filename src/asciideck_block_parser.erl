@@ -80,6 +80,9 @@ block(St) ->
 		%% Block macros.
 		fun block_id/1,
 		fun block_macro/1,
+		%% Breaks.
+		fun thematic_break/1,
+		fun page_break/1,
 		%% Lists.
 		fun bulleted_list/1,
 		fun numbered_list/1,
@@ -421,6 +424,37 @@ block_macro_endif_test() ->
 		target := <<>>,
 		0 := <<>>
 	}, <<>>, _}] = parse(<<"endif::[]">>),
+	ok.
+-endif.
+
+thematic_break(St) ->
+	<<"'''">> = trim(read_line(St), trailing),
+	{thematic_break, #{}, <<>>, ann(St)}.
+
+page_break(St) ->
+	<<"<<<">> = trim(read_line(St), trailing),
+	{page_break, #{}, <<>>, ann(St)}.
+
+-ifdef(TEST).
+thematic_break_test() ->
+	[{thematic_break, _, <<>>, #{line := 1}}] = parse(<<"'''">>),
+	[{thematic_break, _, <<>>, _}] = parse(<<"'''   \n">>),
+	[
+		{paragraph, _, <<"One">>, _},
+		{thematic_break, _, <<>>, #{line := 3}},
+		{paragraph, _, <<"Two">>, _}
+	] = parse(<<"One\n\n'''\n\nTwo">>),
+	?NOT(thematic_break, parse(<<"''">>)),
+	?NOT(thematic_break, parse(<<"''''">>)),
+	?NOT(thematic_break, parse(<<" '''">>)),
+	ok.
+
+page_break_test() ->
+	[{page_break, _, <<>>, #{line := 1}}] = parse(<<"<<<">>),
+	[{page_break, _, <<>>, _}] = parse(<<"<<<  \n">>),
+	?NOT(page_break, parse(<<"<<">>)),
+	?NOT(page_break, parse(<<"<<<<">>)),
+	?NOT(page_break, parse(<<"<<<id>>">>)),
 	ok.
 -endif.
 

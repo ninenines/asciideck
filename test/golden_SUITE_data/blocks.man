@@ -40,3 +40,10 @@ Another quote.
 \(em Anonymous
 .RE
 .sp
+.sp
+.LP
+After the thematic break.
+.sp
+.LP
+After the page break.
+.sp
