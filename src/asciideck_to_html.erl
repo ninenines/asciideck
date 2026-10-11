@@ -70,7 +70,12 @@ ast_node(Node={Type, _, _, _}) ->
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
 			listing_block -> listing_block(Node);
+			literal_block -> literal_block(Node);
 			passthrough_block -> passthrough_block(Node);
+			example_block -> example_block(Node);
+			sidebar_block -> sidebar_block(Node);
+			quote_block -> quote_block(Node);
+			comment_block -> [];
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);
@@ -139,6 +144,58 @@ listing_block({listing_block, Attrs, Listing0, _}) ->
 		Listing,
 		"</div></div>\n"
 	].
+
+%% Literal blocks.
+
+literal_block({literal_block, Attrs, Literal, _}) ->
+	[
+		"<div class=\"literalblock\">",
+		block_title(Attrs),
+		"<div class=\"content\"><pre>",
+		html_encode(Literal),
+		"</pre></div></div>\n"
+	].
+
+%% Example, sidebar and quote blocks.
+%%
+%% Their contents are not parsed as blocks yet
+%% and are rendered as a single paragraph.
+
+example_block({example_block, Attrs, Text, _}) ->
+	[
+		"<div class=\"exampleblock\">",
+		block_title(Attrs),
+		"<div class=\"content\"><p>", inline(Text), "</p></div></div>\n"
+	].
+
+sidebar_block({sidebar_block, Attrs, Text, _}) ->
+	[
+		"<aside class=\"sidebarblock\">",
+		block_title(Attrs),
+		"<div class=\"content\"><p>", inline(Text), "</p></div></aside>\n"
+	].
+
+quote_block({quote_block, Attrs, Text, _}) ->
+	[
+		"<div class=\"quoteblock\">",
+		block_title(Attrs),
+		"<blockquote><p>", inline(Text), "</p></blockquote>",
+		quote_attribution(Attrs),
+		"</div>\n"
+	].
+
+quote_attribution(#{2 := Author, 3 := Citation}) ->
+	["<div class=\"attribution\">&#8212; ", inline(Author),
+		"<br/><cite>", inline(Citation), "</cite></div>"];
+quote_attribution(#{2 := Author}) ->
+	["<div class=\"attribution\">&#8212; ", inline(Author), "</div>"];
+quote_attribution(_) ->
+	[].
+
+block_title(#{<<"title">> := Title}) ->
+	["<div class=\"title\">", inline(Title), "</div>\n"];
+block_title(_) ->
+	[].
 
 %% Passthrough blocks.
 
