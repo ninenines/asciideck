@@ -1,0 +1,23 @@
+.TH "m1" "3" "2026-01-01" "" ""
+.ta T 4n
+\&
+.SH NAME
+.LP
+m1 - Block level tests
+.sp
+.SH DESCRIPTION
+.PP
+1. \fIWhat is it?\fR
+.RS 4
+A test.
+.RE
+.PP
+2. \fIWhy?\fR
+.RS 4
+Because.
+.RE
+.PP
+\fBKey\fR
+.RS 4
+Value.
+.RE

@@ -148,6 +148,10 @@ list({list, #{type := bulleted}, Items, _}) ->
 	["<ul>", fold(Items, fun list_item/1), "</ul>\n"];
 list({list, #{type := numbered}, Items, _}) ->
 	["<ol>", fold(Items, fun list_item/1), "</ol>\n"];
+list({list, #{type := labeled, 1 := <<"qanda">>}, Items, _}) ->
+	["<ol class=\"qanda\">", fold(Items, fun qanda_list_item/1), "</ol>\n"];
+list({list, #{type := labeled, 1 := <<"horizontal">>}, Items, _}) ->
+	["<dl class=\"horizontal\">", fold(Items, fun labeled_list_item/1), "</dl>\n"];
 list({list, #{type := labeled}, Items, _}) ->
 	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"].
 
@@ -155,6 +159,13 @@ list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
 		"<li>",
 		inline(Text), "\n",
+		ast(AST),
+		"</li>\n"
+	].
+
+qanda_list_item({list_item, #{label := Label}, AST, _}) ->
+	[
+		"<li><p class=\"question\"><em>", inline(Label), "</em></p>\n",
 		ast(AST),
 		"</li>\n"
 	].

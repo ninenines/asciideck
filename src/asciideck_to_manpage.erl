@@ -126,8 +126,24 @@ listing_block({listing_block, Attrs, Listing, _}) ->
 
 list({list, #{type := bulleted}, Items, _}) ->
 	fold(Items, fun bulleted_list_item/1);
+list({list, #{type := labeled, 1 := <<"qanda">>}, Items, _}) ->
+	{_, Output} = lists:foldl(fun(Item, {N, Acc}) ->
+		{N + 1, [Acc, qanda_list_item(Item, integer_to_binary(N))]}
+	end, {1, []}, Items),
+	Output;
+%% Horizontal lists are rendered like other labeled lists.
 list({list, #{type := labeled}, Items, _}) ->
 	fold(Items, fun labeled_list_item/1).
+
+qanda_list_item({list_item, #{label := Label}, [{paragraph, _, Text, _}|AST], _}, Num) ->
+	[
+		".PP\n",
+		Num, ". \\fI", inline(Label), "\\fR\n",
+		".RS 4\n",
+		inline(Text), "\n",
+		ast(AST),
+		".RE\n"
+	].
 
 bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
