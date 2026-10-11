@@ -134,8 +134,14 @@ listing_block({listing_block, Attrs, Listing, _}) ->
 
 %% Lists.
 
-list({list, #{type := bulleted}, Items, _}) ->
+list({list, #{type := Type}, Items, _})
+		when Type =:= bulleted; Type =:= bulleted_alt ->
 	fold(Items, fun bulleted_list_item/1);
+list({list, #{type := numbered}, Items, _}) ->
+	{_, Output} = lists:foldl(fun(Item, {N, Acc}) ->
+		{N + 1, [Acc, numbered_list_item(Item, N)]}
+	end, {1, []}, Items),
+	Output;
 list({list, #{type := labeled}, Items, _}) ->
 	fold(Items, fun labeled_list_item/1).
 
@@ -149,6 +155,23 @@ bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 		".RS 4\n"
 		".sp -1\n"
 		".IP \\(bu 2.3\n"
+		".\\}\n",
+		inline(Text), "\n",
+		ast(AST),
+		".RE\n"
+	].
+
+numbered_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}, N) ->
+	Num = integer_to_binary(N),
+	[
+		".ie n \\{\\\n"
+		".RS 4\n"
+		"\\h'-04' ", Num, ".\\h'+01'\\c\n"
+		".\\}\n"
+		".el \\{\\\n"
+		".RS 4\n"
+		".sp -1\n"
+		".IP \" ", Num, ".\" 4.2\n"
 		".\\}\n",
 		inline(Text), "\n",
 		ast(AST),
