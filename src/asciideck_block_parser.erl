@@ -1001,8 +1001,41 @@ delimited_block_test() ->
 -endif.
 
 %% Asciidoc User Guide 16.10
--spec open_block(_) -> no_return().
-open_block(St) -> throw({not_implemented, St}). %% @todo
+%%
+%% The delimiter is exactly two dashes.
+open_block(St) ->
+	<<"--">> = trim(read_line(St), trailing),
+	Ann = ann(St),
+	Block = read_while(St, fun fold_open_block/1, <<>>),
+	%% Skip the closing delimiter.
+	_ = read_line(St),
+	{open_block, #{}, Block, Ann}.
+
+%% Accept eof as a closing delimiter.
+fold_open_block(eof) ->
+	done;
+fold_open_block(Line) ->
+	case trim(Line, trailing) of
+		<<"--">> -> done;
+		_ -> {more, Line}
+	end.
+
+-ifdef(TEST).
+open_block_test() ->
+	[{open_block, _, <<"An open block.">>, #{line := 1}}] = parse(<<
+		"--\n"
+		"An open block.\n"
+		"--\n">>),
+	[{open_block, _, <<"One.\n\nTwo.">>, _}] = parse(<<
+		"--  \n"
+		"One.\n"
+		"\n"
+		"Two.\n"
+		"--">>),
+	?NOT(open_block, parse(<<"-- not an open block">>)),
+	?NOT(open_block, parse(<<"---\nNot an open block.\n---">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 23
 %%

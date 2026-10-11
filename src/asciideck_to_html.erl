@@ -75,6 +75,7 @@ ast_node(Node={Type, _, _, _}) ->
 			example_block -> example_block(Node);
 			sidebar_block -> sidebar_block(Node);
 			quote_block -> quote_block(Node);
+			open_block -> open_block(Node);
 			comment_block -> [];
 			thematic_break -> "<hr/>\n";
 			page_break -> "<div class=\"page-break\" style=\"break-after: page\"></div>\n";
@@ -155,7 +156,7 @@ literal_block({literal_block, Attrs, Literal, _}) ->
 		"</pre></div></div>\n"
 	].
 
-%% Example, sidebar and quote blocks.
+%% Example, sidebar, open and quote blocks.
 %%
 %% Their contents are not parsed as blocks yet
 %% and are rendered as a single paragraph.
@@ -172,6 +173,13 @@ sidebar_block({sidebar_block, Attrs, Text, _}) ->
 		"<aside class=\"sidebarblock\">",
 		block_title(Attrs),
 		"<div class=\"content\"><p>", inline(Text), "</p></div></aside>\n"
+	].
+
+open_block({open_block, Attrs, Text, _}) ->
+	[
+		"<div class=\"openblock\">",
+		block_title(Attrs),
+		"<div class=\"content\"><p>", inline(Text), "</p></div></div>\n"
 	].
 
 quote_block({quote_block, Attrs, Text, _}) ->

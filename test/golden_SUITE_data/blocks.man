@@ -56,3 +56,8 @@ Fenced <code>
 .if n \{\
 .RE
 .\}
+.PP
+\fBOpen title\fR
+.LP
+An \fBopen\fR block.
+.sp

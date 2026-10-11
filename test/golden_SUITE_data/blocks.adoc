@@ -46,3 +46,8 @@ After the page break.
 ```
 Fenced <code>
 ```
+
+.Open title
+--
+An *open* block.
+--
