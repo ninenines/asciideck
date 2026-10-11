@@ -871,7 +871,8 @@ fenced_block_test() ->
 		"\n"
 		"----\n"
 		?FENCE>>),
-	[{paragraph, _, _, _}] = parse(<<?FENCE "erlang shell\nok.\n" ?FENCE>>),
+	[{paragraph, _, <<?FENCE "erlang shell\nok.">>, _}|_]
+		= parse(<<?FENCE "erlang shell\nok.\n" ?FENCE>>),
 	ok.
 -endif.
 
@@ -1177,9 +1178,68 @@ fold_para(Line) ->
 		<<>> -> done;
 		<<"+">> -> done;
 		<<"//", _/bits>> -> done;
-		%% @todo Detect delimited block or list.
-		_ -> {more, Line}
+		Trimmed ->
+			case is_list_marker(Trimmed) orelse is_delimiter(Line) of
+				true -> done;
+				false -> {more, Line}
+			end
 	end.
+
+%% Bulleted and numbered list markers. Labeled lists are not
+%% included because "::" is commonly found in regular text.
+is_list_marker(<<"-", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"*", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"**", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"***", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"****", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"*****", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<".", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"..", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"...", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<"....", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(<<".....", C, _/bits>>) when ?IS_WS(C) -> true;
+is_list_marker(Line) -> is_explicit_marker(Line).
+
+%% Delimiter lines of delimited blocks, open blocks and fences.
+is_delimiter(Line0) ->
+	case trim(Line0, trailing) of
+		<<"--">> -> true;
+		<<?FENCE, Lang/bits>> -> binary:match(Lang, [<<" ">>, <<"\t">>]) =:= nomatch;
+		<<"|===", Rest/bits>> -> is_repeated(Rest, $=);
+		Line = <<C, _/bits>> when byte_size(Line) >= 4,
+				C =:= $-; C =:= $.; C =:= $*; C =:= $/;
+				C =:= $+; C =:= $_; C =:= $= ->
+			is_repeated(Line, C);
+		_ -> false
+	end.
+
+is_repeated(Bin, C) ->
+	try repeats(Bin, C) of
+		ok -> true
+	catch _:_ ->
+		false
+	end.
+
+-ifdef(TEST).
+para_termination_test() ->
+	[{paragraph, _, <<"Para.">>, _}, {listing_block, _, <<"code">>, _}]
+		= parse(<<"Para.\n----\ncode\n----\n">>),
+	[{paragraph, _, <<"Para.">>, _}, {example_block, _, <<"ex">>, _}]
+		= parse(<<"Para.\n====\nex\n====\n">>),
+	[{paragraph, _, <<"Para.">>, _}, {open_block, _, <<"open">>, _}]
+		= parse(<<"Para.\n--\nopen\n--\n">>),
+	[{paragraph, _, <<"Para.">>, _}, {listing_block, _, <<"code">>, _}]
+		= parse(<<"Para.\n" ?FENCE "\ncode\n" ?FENCE "\n">>),
+	[{paragraph, _, <<"Para.">>, _}, {table, _, _, _}]
+		= parse(<<"Para.\n|===\n|a\n|===\n">>),
+	[{paragraph, _, <<"Para.">>, _}, {list_item, _, _, _}]
+		= parse(<<"Para.\n* item">>),
+	[{paragraph, _, <<"Para.">>, _}, {list_item, _, _, _}]
+		= parse(<<"Para.\n1. item">>),
+	[{paragraph, _, <<"Para.\n--- not a delimiter\nmodule:: f">>, _}]
+		= parse(<<"Para.\n--- not a delimiter\nmodule:: f">>),
+	ok.
+-endif.
 
 -ifdef(TEST).
 para_test() ->
