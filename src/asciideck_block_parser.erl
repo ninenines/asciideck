@@ -114,6 +114,32 @@ eof(St) ->
 	eof = read_line(St).
 
 -ifdef(TEST).
+ann_line_test() ->
+	[
+		{section_title, _, _, #{line := 1}},
+		{paragraph, _, _, #{line := 3}},
+		{block_title, _, _, #{line := 6}},
+		{listing_block, _, _, #{line := 7}},
+		{list_item, _, _, #{line := 11}},
+		{list_item, _, _, #{line := 12}},
+		{comment_line, _, _, #{line := 14}}
+	] = parse(<<
+		"= Title\n"
+		"\n"
+		"Paragraph\n"
+		"continued.\n"
+		"\n"
+		".Listing\n"
+		"----\n"
+		"Hello!\n"
+		"----\n"
+		"\n"
+		"* One\n"
+		"* Two\n"
+		"\n"
+		"// Comment\n">>),
+	ok.
+
 eof_test() ->
 	[] = parse(<<>>).
 -endif.
@@ -1099,8 +1125,10 @@ read_while(St=#state{reader=ReaderPid}, F, Acc) ->
 			end
 	end.
 
+%% Always called right after reading the first line of the block,
+%% while the reader is positioned on the next line.
 ann(#state{reader=ReaderPid}) ->
-	#{line => asciideck_reader:get_position(ReaderPid)}.
+	#{line => asciideck_reader:get_position(ReaderPid) - 1}.
 
 trim(Line) ->
 	trim(Line, both).
