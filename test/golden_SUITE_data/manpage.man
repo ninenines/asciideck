@@ -1,0 +1,66 @@
+.TH "golden_man" "3" "2026-01-01" "" ""
+.ta T 4n
+\&
+.SH NAME
+.LP
+golden_man - Golden manual page
+.sp
+.SH DESCRIPTION
+.LP
+A \fBmanual\fR page with a literal and a link (https://ninenines.eu).
+.sp
+.SH ARGUMENTS
+.PP
+\fBArg1\fR
+.RS 4
+The first argument.
+.RE
+.SS Subsection
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+One
+.RE
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+Two
+.RE
+.if n \{\
+.RS 4
+.\}
+.nf
+f() -> ok.
+.fi
+.if n \{\
+.RE
+.\}
+.TS
+allbox tab(:);
+ltb ltb 
+lt lt 
+.
+T{
+Name
+T}:T{
+Value
+T}
+T{
+a
+T}:T{
+1
+T}
+.TE
+.sp 1
