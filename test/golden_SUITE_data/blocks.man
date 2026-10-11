@@ -47,3 +47,12 @@ After the thematic break.
 .LP
 After the page break.
 .sp
+.if n \{\
+.RS 4
+.\}
+.nf
+Fenced <code>
+.fi
+.if n \{\
+.RE
+.\}

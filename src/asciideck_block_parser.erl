@@ -90,6 +90,7 @@ block(St) ->
 		fun list_item_continuation/1,
 		%% Delimited blocks.
 		fun listing_block/1,
+		fun fenced_block/1,
 		fun literal_block/1,
 		fun sidebar_block/1,
 		fun comment_block/1,
@@ -779,6 +780,58 @@ listing_block_test() ->
 		"--------------------------------------\n",
 		Block/binary, "\n"
 		"--------------------------------------\n">>),
+	ok.
+-endif.
+
+%% Fenced code blocks begin with three backticks optionally
+%% followed by the source language. They are listing blocks.
+-define(FENCE, "\x60\x60\x60").
+
+fenced_block(St) ->
+	<<?FENCE, Lang0/bits>> = read_line(St),
+	Ann = ann(St),
+	Attrs = case trim(Lang0) of
+		<<>> ->
+			#{<<"subs">> => <<"verbatim">>};
+		Lang ->
+			false = binary:match(Lang, [<<" ">>, <<"\t">>]) =/= nomatch,
+			#{1 => <<"source">>, 2 => Lang, <<"subs">> => <<"verbatim">>}
+	end,
+	Block = read_while(St, fun fold_fenced_block/1, <<>>),
+	%% Skip the closing fence.
+	_ = read_line(St),
+	{listing_block, Attrs, Block, Ann}.
+
+%% Accept eof as a closing fence.
+fold_fenced_block(eof) ->
+	done;
+fold_fenced_block(Line) ->
+	case trim(Line, trailing) of
+		<<?FENCE>> -> done;
+		_ -> {more, Line}
+	end.
+
+-ifdef(TEST).
+fenced_block_test() ->
+	[{listing_block, Attrs1, <<"f() -> ok.">>, #{line := 1}}] = parse(<<
+		?FENCE "\n"
+		"f() -> ok.\n"
+		?FENCE "\n">>),
+	false = maps:is_key(1, Attrs1),
+	[{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>},
+		<<"f() ->\n\tok.">>, _}] = parse(<<
+		?FENCE "erlang\n"
+		"f() ->\n"
+		"\tok.\n"
+		?FENCE "\n">>),
+	%% Content is kept verbatim.
+	[{listing_block, _, <<"*not strong*\n\n----">>, _}] = parse(<<
+		?FENCE "\n"
+		"*not strong*\n"
+		"\n"
+		"----\n"
+		?FENCE>>),
+	[{paragraph, _, _, _}] = parse(<<?FENCE "erlang shell\nok.\n" ?FENCE>>),
 	ok.
 -endif.
 
