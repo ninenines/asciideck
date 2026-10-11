@@ -6,7 +6,6 @@ golden_blocks - Delimited blocks
 
 == Blocks
 
-.Open title
---
-An *open* block.
---
+```
+Fenced <code>
+```
