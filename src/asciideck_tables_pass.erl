@@ -236,7 +236,8 @@ split_cells(<<C, R/bits>>, Cell, Acc) ->
 	split_cells(R, <<Cell/binary, C>>, Acc).
 
 %% Malformed table (no pipe before cell). Process it like it is a single cell.
-do_parse_cells([Contents], Acc) ->
+do_parse_cells([Contents0], Acc) ->
+	Contents = asciideck_block_parser:parse(Contents0),
 	%% @todo Annotations.
 	lists:reverse([{cell, #{specifiers => <<>>}, Contents, #{}}|Acc]);
 %% Last cell. There are no further cell specifiers.
@@ -283,6 +284,13 @@ parse_table_test() ->
 		"|1 |2 |A\n"
 		"|3 |4 |B\n"
 		"|5 |6 |C">>, #{}),
+	ok.
+
+parse_table_no_pipe_test() ->
+	{[
+		{cell, _, [{paragraph, _, <<"a,b">>, _}], _},
+		{cell, _, [{paragraph, _, <<"c,d">>, _}], _}
+	], 1} = parse_table(<<"a,b\nc,d">>, #{}),
 	ok.
 
 parse_table_escape_pipe_test() ->
