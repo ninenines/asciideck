@@ -31,3 +31,9 @@ x) Ten.
 
 * [ ] Todo.
 * [x] Done.
+
+[#custom-id.role]
+== Shorthand
+
+[#x"y]
+== Quoted

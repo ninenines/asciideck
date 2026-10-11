@@ -16,6 +16,7 @@
 -module(asciideck_attributes_parser).
 
 -export([parse/1]).
+-export([parse_block/1]).
 
 -type attributes() :: #{
 	%% The raw attribute list.
@@ -42,6 +43,65 @@ parse(Data, Attrs, Nth) ->
 		{Name, Value, Rest} ->
 			parse(Rest, Attrs#{Name => Value}, undefined)
 	end.
+
+%% Block attribute lists also accept the shorthand syntax
+%% for the first positional attribute: style#id.role%option.
+-spec parse_block(binary()) -> attributes().
+parse_block(Data) ->
+	case parse(Data) of
+		Attrs=#{1 := First} ->
+			case binary:match(First, [<<" ">>, <<"\t">>]) of
+				nomatch -> shorthand(First, Attrs);
+				_ -> Attrs
+			end;
+		Attrs ->
+			Attrs
+	end.
+
+shorthand(First, Attrs0) ->
+	[Style|Parts] = split_shorthand(First, <<>>, []),
+	Attrs1 = case Style of
+		<<>> -> maps:remove(1, Attrs0);
+		_ -> Attrs0#{1 => Style}
+	end,
+	lists:foldl(fun
+		(<<"#", ID/bits>>, Attrs) when ID =/= <<>> ->
+			Attrs#{<<"id">> => ID};
+		(<<".", Role/bits>>, Attrs) when Role =/= <<>> ->
+			append(<<"role">>, Role, <<" ">>, Attrs);
+		(<<"%", Opt/bits>>, Attrs) when Opt =/= <<>> ->
+			append(<<"options">>, Opt, <<",">>, Attrs#{<<Opt/binary, "-option">> => <<>>});
+		(_, Attrs) ->
+			Attrs
+	end, Attrs1, Parts).
+
+split_shorthand(<<>>, Acc, Parts) ->
+	lists:reverse([Acc|Parts]);
+split_shorthand(<<C, R/bits>>, Acc, Parts) when C =:= $#; C =:= $.; C =:= $% ->
+	split_shorthand(R, <<C>>, [Acc|Parts]);
+split_shorthand(<<C, R/bits>>, Acc, Parts) ->
+	split_shorthand(R, <<Acc/binary, C>>, Parts).
+
+append(Key, Value, Sep, Attrs) ->
+	case Attrs of
+		#{Key := Prev} -> Attrs#{Key => <<Prev/binary, Sep/binary, Value/binary>>};
+		_ -> Attrs#{Key => Value}
+	end.
+
+-ifdef(TEST).
+parse_block_test() ->
+	A1 = #{<<"id">> := <<"intro">>, <<"role">> := <<"lead big">>,
+		<<"options">> := <<"header">>, <<"header-option">> := <<>>}
+		= parse_block(<<"#intro.lead.big%header">>),
+	false = maps:is_key(1, A1),
+	#{1 := <<"source">>, 2 := <<"erlang">>, <<"id">> := <<"ex">>}
+		= parse_block(<<"source#ex,erlang">>),
+	#{1 := <<"quote">>, <<"role">> := <<"r">>, 2 := <<"Bertrand Russell">>}
+		= parse_block(<<"quote.r, Bertrand Russell">>),
+	#{1 := <<"Figure 1. A caption">>} = parse_block(<<"Figure 1. A caption">>),
+	#{1 := <<"NOTE">>} = parse_block(<<"NOTE">>),
+	ok.
+-endif.
 
 parse_attr(<<>>, Acc) ->
 	{Acc, <<>>};

@@ -121,7 +121,7 @@ section_title({section_title, Attrs=#{level := Level}, Title, _}) ->
 		#{<<"id">> := ID0} -> ID0;
 		_ -> id_from_title(Title)
 	end,
-	["<h", LevelC, " id=\"", ID, "\">", inline(Title), "</h", LevelC, ">\n"].
+	["<h", LevelC, " id=\"", html_encode(iolist_to_binary(ID)), "\">", inline(Title), "</h", LevelC, ">\n"].
 
 %% Asciidoc User Guide 8.4.2
 %% @todo Handle cases where the title is repeated in the same document.
