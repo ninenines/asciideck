@@ -80,13 +80,23 @@ ast_node(Node={Type, _, _, _}) ->
 			comment_line -> comment_line(Node);
 			_ ->
 				io:format("Ignored AST node ~p~n", [Node]),
-				[]
+				ast_error(<<"ignored">>, Node)
 		end
 	catch C:E:S ->
 		io:format("Ignored AST node ~p~nReason: ~p:~p~nStacktrace: ~p~n",
 			[Node, C, E, S]),
-		[]
+		ast_error(<<"crashed on">>, Node)
 	end.
+
+%% Skipped nodes leave a comment in the output so that they
+%% can be detected. Only the node type and line are printed
+%% to avoid writing document contents in a groff request.
+ast_error(What, {Type, _, _, Ann}) ->
+	Line = case Ann of
+		#{line := L} when is_integer(L) -> [" line ", integer_to_binary(L)];
+		_ -> []
+	end,
+	["\\# asciideck-error: ", What, " ", atom_to_binary(Type), " node", Line, "\n"].
 
 %% Section titles.
 

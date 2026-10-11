@@ -57,8 +57,32 @@ groff-$1: $(ERLANG_MK_TMP)/groff/$1 app
 	$(gen_verbose) $(MAKE) -C $$< asciidoc-manual MAKEFLAGS= DEPS_DIR=$$</deps ERL_LIBS=$$</deps
 	$(verbose) for f in $$</doc/man*/*.gz; do \
 		echo " GROFF " `basename "$$$$f"`; \
-		zcat "$$$$f" | groff -man -rD1 -z -ww; \
+		if zcat "$$$$f" | grep -q asciideck-error; then \
+			echo "Skipped or failed AST nodes in $$$$f:"; \
+			zcat "$$$$f" | grep asciideck-error; \
+			exit 1; \
+		fi; \
+		zcat "$$$$f" | groff -man -rD1 -z -ww || exit 1; \
 	done
 endef
 
 $(foreach p,$(GROFF_PROJECTS),$(eval $(call groff_targets,$p)))
+
+# Convert the documentation of projects that use Asciideck
+# and check that no errors are produced (test/smoke_SUITE.erl).
+
+.PHONY: smoke
+
+SMOKE_PROJECTS = cowboy cowlib erlang.mk gun ranch
+
+tests:: smoke
+
+smoke: $(addprefix $(ERLANG_MK_TMP)/smoke/,$(SMOKE_PROJECTS))
+	$(verbose) $(MAKE) ct-smoke
+
+$(ERLANG_MK_TMP)/smoke:
+	$(verbose) mkdir -p $@
+
+$(ERLANG_MK_TMP)/smoke/%: | $(ERLANG_MK_TMP)/smoke
+	$(verbose) rm -rf $@
+	$(verbose) git clone -q --depth 1 -- https://github.com/ninenines/$* $@
