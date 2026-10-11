@@ -155,36 +155,33 @@ literal_block({literal_block, Attrs, Literal, _}) ->
 	].
 
 %% Example, sidebar, open and quote blocks.
-%%
-%% Their contents are not parsed as blocks yet
-%% and are rendered as a single paragraph.
 
-example_block({example_block, Attrs, Text, _}) ->
+example_block({example_block, Attrs, AST, _}) ->
 	[
 		"<div class=\"exampleblock\">",
 		block_title(Attrs),
-		"<div class=\"content\"><p>", inline(Text), "</p></div></div>\n"
+		"<div class=\"content\">\n", ast(AST), "</div></div>\n"
 	].
 
-sidebar_block({sidebar_block, Attrs, Text, _}) ->
+sidebar_block({sidebar_block, Attrs, AST, _}) ->
 	[
 		"<aside class=\"sidebarblock\">",
 		block_title(Attrs),
-		"<div class=\"content\"><p>", inline(Text), "</p></div></aside>\n"
+		"<div class=\"content\">\n", ast(AST), "</div></aside>\n"
 	].
 
-open_block({open_block, Attrs, Text, _}) ->
+open_block({open_block, Attrs, AST, _}) ->
 	[
 		"<div class=\"openblock\">",
 		block_title(Attrs),
-		"<div class=\"content\"><p>", inline(Text), "</p></div></div>\n"
+		"<div class=\"content\">\n", ast(AST), "</div></div>\n"
 	].
 
-quote_block({quote_block, Attrs, Text, _}) ->
+quote_block({quote_block, Attrs, AST, _}) ->
 	[
 		"<div class=\"quoteblock\">",
 		block_title(Attrs),
-		"<blockquote><p>", inline(Text), "</p></blockquote>",
+		"<blockquote>\n", ast(AST), "</blockquote>",
 		quote_attribution(Attrs),
 		"</div>\n"
 	].

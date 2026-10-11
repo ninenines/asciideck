@@ -866,30 +866,34 @@ delimited_block(St, Name, Char, Attrs, Four) ->
 	Ann = ann(St),
 	Line = trim(Line0, trailing),
 	repeats(Line, Char),
-	%% Get the content of the block as-is.
-	Block = read_while(St, fun(L) -> fold_delimited_block(L, Four, Char) end, <<>>),
+	%% Get the content of the block as-is. The block ends with
+	%% a delimiter of the same length, allowing blocks of the
+	%% same type to be nested using different lengths.
+	Delimiter = <<Four/binary, Line/binary>>,
+	Block = read_while(St, fun(L) -> fold_delimited_block(L, Delimiter) end, <<>>),
 	%% Skip the trailing delimiter line.
 	_ = read_line(St),
 	{Name, Attrs, Block, Ann}.
 
 %% Accept eof as a closing delimiter.
-fold_delimited_block(eof, _, _) ->
+fold_delimited_block(eof, _) ->
 	done;
-fold_delimited_block(Line0, Four, Char) ->
-	case Line0 of
-		<<Four:4/binary, Line1/bits>> ->
-			try
-				Line = trim(Line1, trailing),
-				repeats(Line, Char),
-				done
-			catch _:_ ->
-				{more, Line0}
-			end;
-		_ ->
-			{more, Line0}
+fold_delimited_block(Line, Delimiter) ->
+	case trim(Line, trailing) of
+		Delimiter -> done;
+		_ -> {more, Line}
 	end.
 
 -ifdef(TEST).
+nested_delimited_block_test() ->
+	[{example_block, _, <<"======\nNested.\n======">>, _}] = parse(<<
+		"====\n"
+		"======\n"
+		"Nested.\n"
+		"======\n"
+		"====\n">>),
+	ok.
+
 delimited_block_test() ->
 	%% Confirm that the block ends at eof.
 	%%
