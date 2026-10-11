@@ -1111,8 +1111,54 @@ block_title_test() ->
 -endif.
 
 %% Asciidoc User Guide 15.2
--spec literal_para(_) -> no_return().
-literal_para(St) -> throw({not_implemented, St}). %% @todo
+%%
+%% A literal paragraph is a paragraph indented by at least one
+%% whitespace character. The common indentation is removed.
+literal_para(St) ->
+	<<C, _/bits>> = Line0 = read_line(St),
+	Ann = ann(St),
+	true = ?IS_WS(C),
+	Line = trim(Line0, trailing),
+	true = Line =/= <<>>,
+	Lines = read_lines_while(St, fun fold_literal_para/1, [Line]),
+	Indent = lists:min([indent(L) || L <- Lines]),
+	Para = iolist_to_binary(lists:join($\n,
+		[binary:part(L, Indent, byte_size(L) - Indent) || L <- Lines])),
+	{literal_block, #{<<"subs">> => <<"verbatim">>, paragraph => true}, Para, Ann}.
+
+fold_literal_para(eof) ->
+	done;
+fold_literal_para(Line0) ->
+	case trim(Line0, trailing) of
+		<<>> -> done;
+		Line -> {more, Line}
+	end.
+
+indent(Line) ->
+	{WS, _} = while(fun(C) -> ?IS_WS(C) end, Line),
+	byte_size(WS).
+
+read_lines_while(St=#state{reader=ReaderPid}, F, Acc) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	case F(read_line(St)) of
+		done ->
+			asciideck_reader:set_position(ReaderPid, Ln),
+			lists:reverse(Acc);
+		{more, Line} ->
+			read_lines_while(St, F, [Line|Acc])
+	end.
+
+-ifdef(TEST).
+literal_para_test() ->
+	[{literal_block, #{paragraph := true}, <<"Consul *necessitatibus*\n  per id.">>, #{line := 1}}]
+		= parse(<<"  Consul *necessitatibus*\n    per id.\n">>),
+	[
+		{paragraph, _, <<"Para.">>, _},
+		{literal_block, _, <<"literal">>, #{line := 3}},
+		{paragraph, _, <<"Para.">>, _}
+	] = parse(<<"Para.\n\n\tliteral\n\nPara.">>),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 15.4
 -spec admonition_para(_) -> no_return().
@@ -1123,8 +1169,7 @@ para(St) ->
 	%% Paragraph must be hard against the left margin.
 	<<C, _/bits>> = Para0 = read_line(St),
 	Ann = ann(St),
-	%% @todo Uncomment this line once everything else has been implemented.
-	_ = ?IS_WS(C), % false = ?IS_WS(C),
+	false = ?IS_WS(C),
 	Para1 = trim(Para0),
 	%% Paragraph ends at blank line, end of file or start of delimited block or list.
 	Para = read_while(St, fun fold_para/1, Para1),
