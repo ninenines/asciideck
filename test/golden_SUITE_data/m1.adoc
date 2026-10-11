@@ -19,3 +19,12 @@ NOTE: An admonition
 paragraph.
 
 WARNING: Careful *now*.
+
+1. One.
+2. Two.
+
+c. Charlie.
+d. Delta.
+
+ix) Nine.
+x) Ten.
