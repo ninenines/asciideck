@@ -75,6 +75,11 @@ ast_node(Node={Type, _, _, _}) ->
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
 			listing_block -> listing_block(Node);
+			literal_block -> literal_block(Node);
+			example_block -> indented_block(Node);
+			sidebar_block -> indented_block(Node);
+			quote_block -> indented_block(Node);
+			comment_block -> [];
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);
@@ -103,13 +108,16 @@ paragraph({paragraph, _, Text, _}) ->
 %% Listing blocks.
 
 listing_block({listing_block, Attrs, Listing, _}) ->
+	verbatim(Attrs, Listing).
+
+%% Literal blocks.
+
+literal_block({literal_block, Attrs, Literal, _}) ->
+	verbatim(Attrs, Literal).
+
+verbatim(Attrs, Listing) ->
 	[
-		case Attrs of
-			#{<<"title">> := Title} ->
-				[".PP\n\\fB", Title, "\\fR\n"];
-			_ ->
-				[]
-		end,
+		block_title(Attrs),
 		".if n \\{\\\n"
 		".RS 4\n"
 		".\\}\n"
@@ -121,6 +129,33 @@ listing_block({listing_block, Attrs, Listing, _}) ->
 		".RE\n"
 		".\\}\n"
 	].
+
+%% Example, sidebar and quote blocks.
+%%
+%% Their contents are not parsed as blocks yet
+%% and are rendered as a single indented paragraph.
+
+indented_block({Type, Attrs, Text, _}) ->
+	[
+		block_title(Attrs),
+		".RS 4\n",
+		inline(Text), "\n",
+		case {Type, Attrs} of
+			{quote_block, #{2 := Author, 3 := Citation}} ->
+				[".br\n\\(em ", inline(Author), ", ", inline(Citation), "\n"];
+			{quote_block, #{2 := Author}} ->
+				[".br\n\\(em ", inline(Author), "\n"];
+			_ ->
+				[]
+		end,
+		".RE\n"
+		".sp\n"
+	].
+
+block_title(#{<<"title">> := Title}) ->
+	[".PP\n\\fB", Title, "\\fR\n"];
+block_title(_) ->
+	[].
 
 %% Lists.
 
