@@ -44,3 +44,14 @@ Why?:: Because.
 
 [horizontal]
 Key:: Value.
+
+.Compound
+====
+First paragraph.
+
+* A list inside.
+
+======
+Nested example.
+======
+====

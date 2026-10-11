@@ -156,3 +156,28 @@ Because.
 .RS 4
 Value.
 .RE
+.PP
+\fBCompound\fR
+.RS 4
+.LP
+First paragraph.
+.sp
+.ie n \{\
+.RS 2
+\h'-02'\(bu\h'+01'\c
+.\}
+.el \{\
+.RS 4
+.sp -1
+.IP \(bu 2.3
+.\}
+A list inside.
+.RE
+.RS 4
+.LP
+Nested example.
+.sp
+.RE
+.sp
+.RE
+.sp

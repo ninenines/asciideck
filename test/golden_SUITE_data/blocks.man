@@ -21,21 +21,29 @@ Literal <text>
 .PP
 \fBExample title\fR
 .RS 4
+.LP
 An \fBexample\fR.
+.sp
 .RE
 .sp
 .RS 4
+.LP
 A sidebar.
+.sp
 .RE
 .sp
 .RS 4
+.LP
 A quote.
+.sp
 .br
 \(em Bertrand Russell, The World of Mathematics (1956)
 .RE
 .sp
 .RS 4
+.LP
 Another quote.
+.sp
 .br
 \(em Anonymous
 .RE
