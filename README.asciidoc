@@ -18,5 +18,6 @@ not available at this point.
 
 == Getting help
 
-* Official IRC Channel: #ninenines on irc.freenode.net
-* http://ninenines.eu/services[Commercial Support]
+* https://discord.gg/x25nNq2fFE[Discord server]
+* https://github.com/ninenines/asciideck/issues[Issues tracker]
+* https://github.com/sponsors/essen[Sponsor me!]
