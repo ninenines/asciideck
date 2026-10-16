@@ -65,7 +65,10 @@ inline(Data, BinAcc, Acc) ->
 		fun http_link/2,
 		fun https_link/2,
 		fun mailto_link/2,
-		%% Quoted text.
+		%% Quoted text. Unconstrained forms are doubled marks
+		%% and are tried before the constrained forms.
+		fun unconstrained_strong/2,
+		fun unconstrained_emphasis/2,
 		fun emphasized_single_quote/2,
 		fun emphasized_underline/2,
 		fun strong/2,
@@ -297,10 +300,75 @@ mailto_link_test() ->
 	ok.
 -endif.
 
+%% Asciidoc User Guide 10.1.2
+%%
+%% The mark is doubled and may appear anywhere, including
+%% inside a word. The content has to be non-empty.
+%% @todo A leading backslash does not yet suppress the quote.
+unconstrained_strong(Data, _) ->
+	unconstrained(Data, strong, $*).
+unconstrained_emphasis(Data, _) ->
+	unconstrained(Data, emphasized, $_).
+
+unconstrained(<<C, C, _/bits>> = Data, Type, C) ->
+	[{0, End}|_] = quote_spans(Data, C),
+	ContentLen = End - 4,
+	<<_:2/binary, Content:ContentLen/binary, _:2/binary, Rest/bits>> = Data,
+	{ok, {Type, #{
+		left => C,
+		right => C
+	}, inline(Content), inline}, Rest}.
+
+%% Doubled marks are applied to the whole paragraph before
+%% the single mark of the same character. A constrained
+%% quote therefore does not close on either half of "**"
+%% or "__". "2 * 3 = **six**." leaves the single * literal.
+quote_spans(Bin, C) ->
+	quote_spans(Bin, C, 0).
+
+quote_spans(Bin, C, From) ->
+	case find_mark(Bin, C, From) of
+		nomatch ->
+			[];
+		Open ->
+			case find_closer(Bin, C, Open) of
+				nomatch ->
+					quote_spans(Bin, C, Open + 1);
+				Close ->
+					[{Open, Close + 2}|quote_spans(Bin, C, Close + 2)]
+			end
+	end.
+
+%% The closer is the first doubled mark that leaves at least
+%% one byte of content. An adjacent mark is content:
+%% "*****" is strong of a single "*". "****" is not a quote.
+find_closer(Bin, C, Open) ->
+	find_closer(Bin, C, Open, Open + 2).
+
+find_closer(Bin, C, Open, From) ->
+	case find_mark(Bin, C, From) of
+		nomatch ->
+			nomatch;
+		Close when Close > Open + 2 ->
+			Close;
+		Close ->
+			find_closer(Bin, C, Open, Close + 1)
+	end.
+
+find_mark(Bin, C, From) ->
+	Size = byte_size(Bin),
+	case From > Size - 2 of
+		true ->
+			nomatch;
+		false ->
+			case binary:match(Bin, <<C, C>>, [{scope, {From, Size - From}}]) of
+				nomatch -> nomatch;
+				{Pos, 2} -> Pos
+			end
+	end.
+
 %% Asciidoc User Guide 10.1
-%% @todo <<"\\**"
 %% @todo <<"\\*"
-%% @todo <<"**"
 emphasized_single_quote(Data, Prev) ->
 	quoted_text(Data, Prev, emphasized, $', $').
 emphasized_underline(Data, Prev) ->
@@ -309,13 +377,42 @@ strong(Data, Prev) ->
 	quoted_text(Data, Prev, strong, $*, $*).
 
 quoted_text(<<Left, Rest0/bits>>, Prev, Type, Left, Right) when ?IS_BOUNDARY(Prev) ->
-	{Content, <<Right, Rest/bits>>} = while(fun(C) -> C =/= Right end, Rest0),
+	{Content, Rest} = constrained_content(Rest0, Left),
 	%% "**" is not strong. The content has to be non-empty.
 	true = Content =/= <<>>,
 	{ok, {Type, #{
 		left => Left,
 		right => Right
 	}, inline(Content), inline}, Rest}.
+
+%% * and _ have a doubled form. Skip those spans when
+%% looking for the closing mark. Other quotes stop at
+%% the first mark.
+constrained_content(Bin, C) when C =:= $*; C =:= $_ ->
+	take_constrained(Bin, C, quote_spans(Bin, C), 0);
+constrained_content(Bin, C) ->
+	{Content, <<C, Rest/bits>>} = while(fun(Ch) -> Ch =/= C end, Bin),
+	{Content, Rest}.
+
+take_constrained(Bin, _, _, Pos) when Pos >= byte_size(Bin) ->
+	error(nomatch);
+take_constrained(Bin, C, Spans, Pos) ->
+	case binary:at(Bin, Pos) =:= C andalso not in_span(Pos, Spans) of
+		true ->
+			<<Content:Pos/binary, _:1/binary, Rest/bits>> = Bin,
+			{Content, Rest};
+		false ->
+			take_constrained(Bin, C, Spans, Pos + 1)
+	end.
+
+in_span(_, []) ->
+	false;
+in_span(Pos, [{_, End}|Rest]) when Pos >= End ->
+	in_span(Pos, Rest);
+in_span(Pos, [{Open, _}|_]) when Pos >= Open ->
+	true;
+in_span(_, _) ->
+	false.
 
 -ifdef(TEST).
 emphasized_test() ->
@@ -345,6 +442,83 @@ strong_test() ->
 	>>),
 	<<"** Two.">> = inline(<<"** Two.">>),
 	<<"*** Three.">> = inline(<<"*** Three.">>),
+	ok.
+
+%% A closer on the next line ends the quote. The newline
+%% becomes a space, as it does in other inline text.
+unconstrained_test() ->
+	[{strong, #{left := $*, right := $*}, <<"DEPRECATED">>, _}]
+		= inline(<<"**DEPRECATED**">>),
+	[
+		{strong, #{left := $*, right := $*}, <<"F">>, _},
+		<<"ile Open">>
+	] = inline(<<"**F**ile Open">>),
+	[
+		<<"a">>,
+		{strong, _, <<"b">>, _},
+		<<"c">>
+	] = inline(<<"a**b**c">>),
+	[
+		{strong, _, [
+			<<"bold ">>,
+			{emphasized, _, <<"em">>, _},
+			<<" more">>
+		], _}
+	] = inline(<<"**bold _em_ more**">>),
+	[
+		{strong, _, <<"a ">>, _},
+		<<"b">>,
+		{strong, _, <<" c">>, _}
+	] = inline(<<"**a **b** c**">>),
+	[{strong, _, <<"multi line">>, _}] = inline(<<"**multi\nline**">>),
+	[
+		{strong, _, <<" Two. ">>, _},
+		<<" Three.">>
+	] = inline(<<"** Two.\n** Three.">>),
+	[{emphasized, #{left := $_, right := $_}, <<"File">>, _}, <<"name">>]
+		= inline(<<"__File__name">>),
+	%% A single mark does not swallow a later doubled mark.
+	[
+		<<"use * as a wildcard then ">>,
+		{strong, _, <<"F">>, _},
+		<<"ile.">>
+	] = inline(<<"use * as a wildcard then **F**ile.">>),
+	[
+		<<"2 * 3 = ">>,
+		{strong, _, <<"six">>, _},
+		<<".">>
+	] = inline(<<"2 * 3 = **six**.">>),
+	[
+		<<"a _ b and ">>,
+		{emphasized, _, <<"call">>, _},
+		<<".">>
+	] = inline(<<"a _ b and __call__.">>),
+	[
+		<<"*a ">>,
+		{strong, _, <<"b">>, _}
+	] = inline(<<"*a **b**">>),
+	[{strong, _, [
+		<<"a ">>,
+		{strong, _, <<"b">>, _},
+		<<" c">>
+	], _}] = inline(<<"*a **b** c*">>),
+	<<"**">> = inline(<<"**">>),
+	<<"****">> = inline(<<"****">>),
+	<<"__">> = inline(<<"__">>),
+	%% An unclosed doubled mark must not drop earlier quotes,
+	%% and must not pair with the closer of a finished quote.
+	[{strong, _, <<"bold">>, _}, <<" and then **">>]
+		= inline(<<"*bold* and then **">>),
+	[{strong, _, <<"six">>, _}, <<" and **">>]
+		= inline(<<"**six** and **">>),
+	[{emphasized, _, <<"em">>, _}, <<" and __">>]
+		= inline(<<"_em_ and __">>),
+	[{strong, _, <<"*">>, _}] = inline(<<"*****">>),
+	[
+		<<"x ">>,
+		{strong, _, <<"**y">>, _},
+		<<" z">>
+	] = inline(<<"x ****y** z">>),
 	ok.
 -endif.
 

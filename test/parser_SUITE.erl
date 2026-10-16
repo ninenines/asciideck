@@ -93,6 +93,37 @@ quoted_text_strong(_) ->
 		parse("*Hello link:downloads/cowboy-2.0.tgz[2.0] world!*"),
 	ok.
 
+quoted_text_unconstrained(_) ->
+	doc("Unconstrained quotes may appear inside a word. (10.1.2)"),
+	[{paragraph, _, [
+		<<"The ">>,
+		{strong, _, <<"DEPRECATED">>, _},
+		<<" form.">>
+	], _}] = parse("The **DEPRECATED** form."),
+	[{paragraph, _, [
+		{strong, _, <<"F">>, _},
+		<<"ile Open.">>
+	], _}] = parse("**F**ile Open."),
+	[{paragraph, _, [
+		<<"See the ">>,
+		{emphasized, _, <<"File">>, _},
+		<<"name.">>
+	], _}] = parse("See the __File__name."),
+	[{paragraph, _, [{strong, _, <<"multi line">>, _}], _}]
+		= parse("**multi\nline**"),
+	%% The single mark stays literal when a doubled mark follows.
+	[{paragraph, _, [
+		<<"2 * 3 = ">>,
+		{strong, _, <<"six">>, _},
+		<<".">>
+	], _}] = parse("2 * 3 = **six**."),
+	[{paragraph, _, [
+		<<"a _ b and ">>,
+		{emphasized, _, <<"call">>, _},
+		<<".">>
+	], _}] = parse("a _ b and __call__."),
+	ok.
+
 quoted_text_literal_mono(_) ->
 	doc("Literal monospace text formatting. (10.1)"),
 	[{paragraph, _, [{inline_literal_passthrough, _, <<"Hello beautiful world!">>, _}], _}] =
