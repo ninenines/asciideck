@@ -171,9 +171,14 @@ literal_paragraph({Type, Attrs, Text, _})
 listing_block({listing_block, Attrs, Listing0, _}) ->
 	Listing = case Attrs of
 		#{1 := <<"source">>, 2 := _} ->
-			try asciideck_source_highlight:filter(Listing0, Attrs) catch C:E:S -> io:format("~p ~p ~p~n", [C, E, S]), exit(bad) end;
+			case asciideck_source_highlight:filter(Listing0, Attrs) of
+				{ok, Highlighted} ->
+					Highlighted;
+				error ->
+					verbatim_listing(Listing0)
+			end;
 		_ ->
-			["<pre>", html_encode(Listing0), "</pre>"]
+			verbatim_listing(Listing0)
 	end,
 	[
 		"<div class=\"listingblock\">",
@@ -187,6 +192,9 @@ listing_block({listing_block, Attrs, Listing0, _}) ->
 		Listing,
 		"</div></div>\n"
 	].
+
+verbatim_listing(Listing) ->
+	["<pre>", html_encode(Listing), "</pre>"].
 
 %% Passthrough blocks.
 
@@ -401,6 +409,18 @@ open_listing_test() ->
 	<<"<div class=\"listingblock\">"
 		"<div class=\"content\">"
 		"<pre>f() -&gt; ok.</pre>"
+		"</div></div>\n">> = HTML,
+	ok.
+
+source_highlight_fallback_test() ->
+	AST = [{listing_block, #{
+		1 => <<"source">>,
+		2 => <<"erlang;touch /tmp/x">>
+	}, <<"a < b">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"listingblock\">"
+		"<div class=\"content\">"
+		"<pre>a &lt; b</pre>"
 		"</div></div>\n">> = HTML,
 	ok.
 
