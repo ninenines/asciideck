@@ -112,7 +112,7 @@ quoted_text_literal_mono(_) ->
 
 %% Title.
 
-%% @todo Long titles. (11.1)
+%% Underline titles (11.1) are intentionally not recognized.
 %% @todo Floating titles. (11.3)
 
 title_short(_) ->
@@ -122,6 +122,25 @@ title_short(_) ->
 	[{section_title, #{level := 2}, <<"Hello world!">>, _}] = parse("=== Hello world!"),
 	[{section_title, #{level := 3}, <<"Hello world!">>, _}] = parse("==== Hello world!"),
 	[{section_title, #{level := 4}, <<"Hello world!">>, _}] = parse("===== Hello world!"),
+	ok.
+
+title_not_underlined(_) ->
+	doc("An underline is not a section title. (11.1)"),
+	[] = [T || {section_title, _, _, _} = T <- parse(
+		"Hello\n"
+		"----\n"
+		"code\n"
+		"----\n")],
+	[] = [T || {section_title, _, _, _} = T <- parse(
+		"Hello\n"
+		"====\n"
+		"code\n"
+		"====\n")],
+	[] = [T || {section_title, _, _, _} = T <- parse(
+		"[NOTE]\n"
+		"====\n")],
+	%% A lone + stays a list continuation, not an underline title.
+	[] = [T || {section_title, _, _, _} = T <- parse("+\n")],
 	ok.
 
 title_short_no_spaces(_) ->

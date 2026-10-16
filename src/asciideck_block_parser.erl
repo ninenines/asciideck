@@ -92,7 +92,6 @@ block(St) ->
 		fun eof/1,
 		%% Section titles.
 		fun section_title/1,
-		fun long_section_title/1,
 		%% Block macros.
 		fun block_id/1,
 		fun block_macro/1,
@@ -211,79 +210,6 @@ section_title_test() ->
 		= parse(<<"= Document Title (level 0) =  ">>),
 	%% A space before the first delimiter is not a title.
 	?NOT(section_title, parse(<<" = Document Title (level 0)">>)),
-	ok.
--endif.
-
-%% Asciidoc User Guide 11.1
-long_section_title(St) ->
-	%% Title must be hard against the left margin.
-	<<C, _/bits>> = Title0 = read_line(St),
-	Ann = ann(St),
-	false = ?IS_WS(C),
-	Title = trim(Title0),
-	%% A lone + is a list continuation; -- opens an open block.
-	false = Title =:= <<"+">>,
-	false = Title =:= <<"--">>,
-	%% Read the underline.
-	{Level, Char, Underline0} = case read_line(St) of
-		U = <<"=", _/bits >> -> {0, $=, U};
-		U = <<"-", _/bits >> -> {1, $-, U};
-		U = <<"~", _/bits >> -> {2, $~, U};
-		U = <<"^", _/bits >> -> {3, $^, U};
-		U = <<"+", _/bits >> -> {4, $+, U}
-	end,
-	Underline = trim(Underline0, trailing),
-	%% Underline must be the same character repeated over the entire line.
-	repeats(Underline, Char),
-	%% Underline must be the same size as the title, +/- 2 characters.
-	TLen = byte_size(Title),
-	ULen = byte_size(Underline),
-	true = (TLen >= ULen - 2) andalso (TLen =< ULen + 2),
-	%% Good!
-	{section_title, #{level => Level}, Title, Ann}.
-
--ifdef(TEST).
-long_section_title_test() ->
-	%% Same amount of characters for the underline.
-	[{section_title, #{level := 0}, <<"Document Title (level 0)">>, _}] = parse(<<
-		"Document Title (level 0)\n"
-		"========================">>),
-	[{section_title, #{level := 1}, <<"Section Title (level 1)">>, _}] = parse(<<
-		"Section Title (level 1)\n"
-		"-----------------------">>),
-	[{section_title, #{level := 2}, <<"Section Title (level 2)">>, _}] = parse(<<
-		"Section Title (level 2)\n"
-		"~~~~~~~~~~~~~~~~~~~~~~~">>),
-	[{section_title, #{level := 3}, <<"Section Title (level 3)">>, _}] = parse(<<
-		"Section Title (level 3)\n"
-		"^^^^^^^^^^^^^^^^^^^^^^^">>),
-	[{section_title, #{level := 4}, <<"Section Title (level 4)">>, _}] = parse(<<
-		"Section Title (level 4)\n"
-		"+++++++++++++++++++++++">>),
-	%% A shorter title to confirm we are not cheating.
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"======">>),
-	%% Underline can be +/- 2 characters.
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"====">>),
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"=====">>),
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"=======">>),
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"========">>),
-	%% Underline too short/long results in a different block.
-	?NOT(section_title, parse(<<
-		"Hello!\n"
-		"===">>)),
-	?NOT(section_title, parse(<<
-		"Hello!\n"
-		"=========">>)),
 	ok.
 -endif.
 
