@@ -162,6 +162,47 @@ quoted_text_unconstrained_mono(_) ->
 	], _}], _}] = parse("`tick +++`in`+++ here`"),
 	ok.
 
+quoted_text_constrained_mono(_) ->
+	doc("Constrained monospace does not match inside a word. (10.1)"),
+	[{paragraph, _, [
+		<<"Use ">>,
+		{monospaced, _, <<"lists:reverse/1">>, _},
+		<<".">>
+	], _}] = parse("Use +lists:reverse/1+."),
+	[{paragraph, _, <<"See +x+y here.">>, _}] = parse("See +x+y here."),
+	[{paragraph, _, [
+		{monospaced, _, <<"x">>, _},
+		<<"y">>
+	], _}] = parse("++x++y"),
+	[{paragraph, _, [
+		<<"A ">>,
+		{monospaced, _, <<"+">>, _},
+		<<"+ B">>
+	], _}] = parse("A ++++ B"),
+	[{paragraph, _, [
+		<<"A ">>,
+		{monospaced, _, <<"+">>, _},
+		<<" B">>
+	], _}] = parse("A +++ B"),
+	[{paragraph, _, [
+		<<"see ">>,
+		{monospaced, _, [
+			<<"the ">>,
+			{monospaced, _, <<"big">>, _},
+			<<" end">>
+		], _}
+	], _}] = parse("see +the ++big++ end+"),
+	[{paragraph, _, [{emphasized, _, <<"+a+">>, _}], _}]
+		= parse("_+a+_"),
+	[{paragraph, _, [
+		{monospaced, _, <<"init">>, _},
+		<<".">>,
+		{monospaced, _, <<"loop">>, _}
+	], _}] = parse("+init+.+loop+"),
+	[{paragraph, _, <<"See :+code+: here.">>, _}]
+		= parse("See :+code+: here."),
+	ok.
+
 quoted_text_super_sub(_) ->
 	doc("Superscripts and subscripts. (10.2)"),
 	[{paragraph, _, [

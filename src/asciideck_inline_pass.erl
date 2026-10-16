@@ -46,19 +46,25 @@ run([{Type, Attrs, Data, Ann}|Tail]) ->
 inline(<<>>) ->
 	<<>>;
 inline(Data) ->
-	case inline(Data, <<>>, []) of
+	inline(Data, start).
+
+%% Mark is the character before this text. 'start' is the
+%% real beginning, where ^ is a boundary. 'consumed' means
+%% the previous character was a "+" that already closed a
+%% monospace quote and cannot bound another one.
+inline(Data, Mark) ->
+	case inline(Data, <<>>, [], Mark) of
 		[] -> <<>>;
 		[Text] when is_binary(Text) -> Text;
 		AST -> AST
 	end.
 
--spec inline(binary(), binary(), inline_ast()) -> inline_ast().
-inline(<<>>, <<>>, Acc) ->
+inline(<<>>, <<>>, Acc, _) ->
 	lists:reverse(Acc);
-inline(<<>>, BinAcc, Acc) ->
+inline(<<>>, BinAcc, Acc, _) ->
 	lists:reverse([BinAcc|Acc]);
-inline(Data, BinAcc, Acc) ->
-	oneof(Data, BinAcc, Acc, [
+inline(Data, BinAcc, Acc, Mark) ->
+	oneof(Data, BinAcc, Acc, Mark, [
 		%% Links.
 		fun xref/2,
 		fun link/2,
@@ -72,6 +78,7 @@ inline(Data, BinAcc, Acc) ->
 		%% +++ is a passthrough and is taken before ++.
 		fun passthrough_plus/2,
 		fun unconstrained_mono/2,
+		fun(Bin, _) -> constrained_mono(Bin, Mark) end,
 		fun superscript/2,
 		fun subscript/2,
 		fun emphasized_single_quote/2,
@@ -85,27 +92,41 @@ inline(Data, BinAcc, Acc) ->
 
 %% The inline pass replaces \r\n and \n with a simple space
 %% when it occurs within normal text.
-oneof(<<$\r, $\n, Rest/bits>>, BinAcc, Acc, []) ->
-	inline(Rest, <<BinAcc/binary, $\s>>, Acc);
-oneof(<<$\n, Rest/bits>>, BinAcc, Acc, []) ->
-	inline(Rest, <<BinAcc/binary, $\s>>, Acc);
-oneof(<<C, Rest/bits>>, BinAcc, Acc, []) ->
-	inline(Rest, <<BinAcc/binary, C>>, Acc);
-oneof(Data, BinAcc, Acc, [Parse|Tail]) ->
+oneof(<<$\r, $\n, Rest/bits>>, BinAcc, Acc, _, []) ->
+	inline(Rest, <<BinAcc/binary, $\s>>, Acc, $\s);
+oneof(<<$\n, Rest/bits>>, BinAcc, Acc, _, []) ->
+	inline(Rest, <<BinAcc/binary, $\s>>, Acc, $\s);
+oneof(<<C/utf8, Rest/bits>>, BinAcc, Acc, _, []) ->
+	inline(Rest, <<BinAcc/binary, C/utf8>>, Acc, C);
+oneof(<<C, Rest/bits>>, BinAcc, Acc, _, []) ->
+	inline(Rest, <<BinAcc/binary, C>>, Acc, C);
+oneof(Data, BinAcc, Acc, Mark, [Parse|Tail]) ->
 	Prev = case BinAcc of
 		<<>> -> undefined;
 		_ -> binary:last(BinAcc)
 	end,
 	try Parse(Data, Prev) of
+		{ok, Inline, Rest, NextMark} when BinAcc =:= <<>> ->
+			inline(Rest, <<>>, [Inline|Acc], NextMark);
+		{ok, Inline, Rest, NextMark} ->
+			inline(Rest, <<>>, [Inline, BinAcc|Acc], NextMark);
 		{ok, Inline, Rest} when BinAcc =:= <<>> ->
-			inline(Rest, BinAcc, [Inline|Acc]);
+			inline(Rest, <<>>, [Inline|Acc], prev_after(Inline));
 		{ok, Inline, Rest} ->
-			inline(Rest, <<>>, [Inline, BinAcc|Acc]);
+			inline(Rest, <<>>, [Inline, BinAcc|Acc], prev_after(Inline));
 		{skip, Text, Rest} ->
-			oneof(Rest, <<BinAcc/binary, Text/binary>>, Acc, Tail)
+			oneof(Rest, <<BinAcc/binary, Text/binary>>, Acc, Mark, Tail)
 	catch _:_ ->
-		oneof(Data, BinAcc, Acc, Tail)
+		oneof(Data, BinAcc, Acc, Mark, Tail)
 	end.
+
+%% A "+" closer is consumed, so it is not a boundary for
+%% the next character. Other quote closers stay visible
+%% because "+" is paired before those quotes.
+prev_after({_, #{right := C}, _, _}) when is_integer(C) ->
+	C;
+prev_after(_) ->
+	start.
 
 -ifdef(TEST).
 text_test() ->
@@ -325,6 +346,94 @@ passthrough_plus(<<"+++", Rest0/bits>>, _) ->
 unconstrained_mono(Data, _) ->
 	unconstrained(Data, monospaced, $+).
 
+%% Asciidoc User Guide 10.1
+%%
+%% The content cannot start or end with whitespace. The
+%% closer must be followed by a non-word character or the
+%% end of the text. A finished "++" pair and a +++ span
+%% are not closers. The left side is ^ or a character
+%% other than a word character, ";", ":", or "}".
+%% "++" is tried first, so ++x++y is unconstrained.
+constrained_mono(<<$+, Rest/bits>>, Mark) ->
+	case plus_left(Mark) of
+		false ->
+			error(nomatch);
+		true ->
+			Passes = plus_passthroughs(Rest),
+			Doubled = quote_spans(Rest, $+, 0, Passes),
+			{Content, Tail} = plus_content(Rest,
+				lists:sort(Doubled ++ Passes), 0),
+			{ok, {monospaced, #{
+				left => $+,
+				right => $+
+			}, inline(Content, $+), inline}, Tail, plus_resume(Tail)}
+	end.
+
+%% Closing on the first "+" of "++" must not let the
+%% second "+" open a new quote. "++x+++code+" still does,
+%% because that "+" follows a finished "++" pair.
+plus_resume(<<$+, _/bits>>) ->
+	consumed;
+plus_resume(_) ->
+	$+.
+
+%% ^ is only the real start of the text. A consumed "+"
+%% closer is not a boundary. ";" ":" "}" and word
+%% characters, including "_", are not either.
+plus_left(start) ->
+	true;
+plus_left(consumed) ->
+	false;
+plus_left(C) ->
+	not plus_word(C) andalso C =/= $; andalso C =/= $: andalso C =/= $}.
+
+plus_word(C) when C >= $a, C =< $z -> true;
+plus_word(C) when C >= $A, C =< $Z -> true;
+plus_word(C) when C >= $0, C =< $9 -> true;
+plus_word($_) -> true;
+plus_word(C) when is_integer(C), C > 127 ->
+	match =:= re:run(<<C/utf8>>, <<"^\\w$">>, [unicode, ucp, {capture, none}]);
+plus_word(_) ->
+	false.
+
+plus_content(Bin, _, Pos) when Pos >= byte_size(Bin) ->
+	error(nomatch);
+plus_content(<<C, _/bits>>, _, 0) when C =:= $\s; C =:= $\t; C =:= $\n; C =:= $\r ->
+	error(nomatch);
+plus_content(Bin, Skip, Pos) ->
+	case plus_closer(Bin, Skip, Pos) of
+		true ->
+			<<Content:Pos/binary, _:1/binary, Tail/bits>> = Bin,
+			{Content, Tail};
+		false ->
+			plus_content(Bin, Skip, Pos + 1)
+	end.
+
+plus_closer(Bin, Skip, Pos) ->
+	case binary:at(Bin, Pos) =:= $+ andalso not in_span(Pos, Skip) of
+		false ->
+			false;
+		true when Pos =:= 0 ->
+			false;
+		true ->
+			not plus_space(binary:at(Bin, Pos - 1))
+				andalso plus_right_boundary(Bin, Pos + 1)
+	end.
+
+plus_space($\s) -> true;
+plus_space($\t) -> true;
+plus_space($\n) -> true;
+plus_space($\r) -> true;
+plus_space(_) -> false.
+
+%% Python re \w, including letters such as "é". The ucp
+%% flag is what makes \w use Unicode properties.
+plus_right_boundary(Bin, Pos) when Pos >= byte_size(Bin) ->
+	true;
+plus_right_boundary(Bin, Pos) ->
+	<<_:Pos/binary, Rest/binary>> = Bin,
+	nomatch =:= re:run(Rest, <<"^\\w">>, [unicode, ucp, {capture, none}]).
+
 unconstrained(<<C, C, _/bits>> = Data, Type, C) ->
 	[{0, End}|_] = quote_spans(Data, C),
 	ContentLen = End - 4,
@@ -332,7 +441,7 @@ unconstrained(<<C, C, _/bits>> = Data, Type, C) ->
 	{ok, {Type, #{
 		left => C,
 		right => C
-	}, inline(Content), inline}, Rest}.
+	}, inline(Content, C), inline}, Rest}.
 
 %% Doubled marks are applied to the whole paragraph before
 %% the single mark of the same character. A constrained
@@ -477,7 +586,7 @@ subscript(<<$~, Rest/bits>>, _) ->
 single_mark(Rest, C, Type) ->
 	Pos = single_closer(Rest, C, 0, plus_passthroughs(Rest)),
 	<<Content:Pos/binary, _:1/binary, Tail/bits>> = Rest,
-	{ok, {Type, #{}, inline(Content), inline}, Tail}.
+	{ok, {Type, #{}, inline(Content, C), inline}, Tail}.
 
 single_closer(Bin, C, From, Skip) ->
 	Size = byte_size(Bin),
@@ -516,7 +625,7 @@ quoted_text(<<Left, Rest0/bits>>, Prev, Type, Left, Right) when ?IS_BOUNDARY(Pre
 	{ok, {Type, #{
 		left => Left,
 		right => Right
-	}, inline(Content), inline}, Rest}.
+	}, inline(Content, Left), inline}, Rest}.
 
 %% * and _ have a doubled form. Skip those spans when
 %% looking for the closing mark. +++text+++ is not text
@@ -700,7 +809,8 @@ unconstrained_mono_test() ->
 		<<"c">>
 	] = inline(<<"a++b++c">>),
 	[{monospaced, #{}, <<" not ">>, _}] = inline(<<"++ not ++">>),
-	<<"++++">> = inline(<<"++++">>),
+	%% Four pluses are not an unconstrained quote.
+	[{monospaced, #{}, <<"+">>, _}, <<"+">>] = inline(<<"++++">>),
 	[{monospaced, #{}, <<"+">>, _}] = inline(<<"+++++">>),
 	[{monospaced, #{}, [
 		<<"code ">>,
@@ -796,6 +906,119 @@ passthrough_shield_test() ->
 	], _}] = inline(<<"_em +++_no_+++ em_">>),
 	[{strong, _, [{passthrough, #{}, <<"*not*">>, _}], _}]
 		= inline(<<"*+++*not*+++*">>),
+	ok.
+
+constrained_mono_test() ->
+	[{monospaced, #{}, <<"code">>, _}] = inline(<<"+code+">>),
+	<<"+x+y">> = inline(<<"+x+y">>),
+	<<"+code+_y">> = inline(<<"+code+_y">>),
+	<<"+code+2">> = inline(<<"+code+2">>),
+	<<"+code+é"/utf8>> = inline(<<"+code+é"/utf8>>),
+	[{monospaced, #{}, <<"x+y">>, _}] = inline(<<"+x+y+">>),
+	[
+		{monospaced, #{}, <<"x+y">>, _},
+		<<".">>
+	] = inline(<<"+x+y+.">>),
+	[{monospaced, #{}, <<"+">>, _}] = inline(<<"+++">>),
+	[
+		{monospaced, #{}, <<"x">>, _},
+		<<"y">>
+	] = inline(<<"++x++y">>),
+	<<"See + not + here.">> = inline(<<"See + not + here.">>),
+	<<"See +not + here.">> = inline(<<"See +not + here.">>),
+	<<"See + not+ here.">> = inline(<<"See + not+ here.">>),
+	<<"word+code+">> = inline(<<"word+code+">>),
+	[
+		<<"(">>,
+		{monospaced, #{}, <<"code">>, _},
+		<<")">>
+	] = inline(<<"(+code+)">>),
+	[
+		{monospaced, #{}, <<"code">>, _},
+		<<",">>
+	] = inline(<<"+code+,">>),
+	[{monospaced, #{}, <<"foo bar">>, _}] = inline(<<"+foo\nbar+">>),
+	[{monospaced, #{}, [
+		<<"code ">>,
+		{strong, #{}, <<"bold">>, _}
+	], _}] = inline(<<"+code *bold*+">>),
+	[{strong, #{}, [{monospaced, #{}, <<"bold">>, _}], _}]
+		= inline(<<"*+bold+*">>),
+	[{monospaced, #{}, [
+		<<"see ">>,
+		{passthrough, #{}, <<"x">>, _},
+		<<" more">>
+	], _}] = inline(<<"+see +++x+++ more+">>),
+	[{monospaced, #{}, [
+		<<"foo">>,
+		{line_break, #{}, <<>>, _},
+		<<"bar">>
+	], _}] = inline(<<"+foo +\nbar+">>),
+	[
+		<<"Stay">>,
+		{line_break, #{}, <<>>, _},
+		<<"put">>
+	] = inline(<<"Stay +\nput">>),
+	%% A finished ++ pair is not a constrained closer.
+	[
+		<<"see ">>,
+		{monospaced, #{}, [
+			<<"the ">>,
+			{monospaced, #{}, <<"big">>, _},
+			<<" end">>
+		], _}
+	] = inline(<<"see +the ++big++ end+">>),
+	[
+		<<"+a">>,
+		{monospaced, #{}, <<"b">>, _},
+		<<"c">>
+	] = inline(<<"+a++b++c">>),
+	[<<"+foo">>, {monospaced, #{}, <<"bar">>, _}]
+		= inline(<<"+foo++bar++">>),
+	[<<"+C">>, {monospaced, #{}, <<" code">>, _}]
+		= inline(<<"+C++ code++">>),
+	[{monospaced, #{}, [
+		<<"foo">>,
+		{monospaced, #{}, <<"bar">>, _},
+		<<"baz">>
+	], _}] = inline(<<"+foo++bar++baz+">>),
+	[{monospaced, #{}, <<"C">>, _}, <<"+ code+">>]
+		= inline(<<"+C++ code+">>),
+	[{monospaced, #{}, <<"foo">>, _}, <<"+bar+">>]
+		= inline(<<"+foo++bar+">>),
+	[
+		{monospaced, #{}, <<"x">>, _},
+		{monospaced, #{}, <<"code">>, _}
+	] = inline(<<"++x+++code+">>),
+	[<<"x+">>, {monospaced, #{}, <<"code">>, _}]
+		= inline(<<"x++code+">>),
+	%% Punctuation bounds a constrained quote. ";" ":" "}" do not.
+	[<<"\"">>, {monospaced, #{}, <<"code">>, _}, <<"\"">>]
+		= inline(<<"\"+code+\"">>),
+	[<<"end.">>, {monospaced, #{}, <<"code">>, _}]
+		= inline(<<"end.+code+">>),
+	[{monospaced, #{}, <<"init">>, _}, <<".">>,
+		{monospaced, #{}, <<"loop">>, _}]
+		= inline(<<"+init+.+loop+">>),
+	<<":+code+:">> = inline(<<":+code+:">>),
+	<<"foo:+bar+">> = inline(<<"foo:+bar+">>),
+	<<";+code+">> = inline(<<";+code+">>),
+	<<"}+code+">> = inline(<<"}+code+">>),
+	%% "_" is a word character, so "+" does not open inside it.
+	[{emphasized, #{}, <<"+a+">>, _}] = inline(<<"_+a+_">>),
+	[{emphasized, #{}, <<"+a+">>, _}] = inline(<<"__+a+__">>),
+	[{emphasized, #{}, <<"foo">>, _}, <<"+bar+">>]
+		= inline(<<"_foo_+bar+">>),
+	[{strong, #{}, [{monospaced, #{}, <<"a">>, _}], _}]
+		= inline(<<"**+a+**">>),
+	[
+		{strong, #{}, <<"bar">>, _},
+		{monospaced, #{}, <<"foo">>, _}
+	] = inline(<<"*bar*+foo+">>),
+	[
+		{monospaced, #{}, <<"foo">>, _},
+		{strong, #{}, <<"bar">>, _}
+	] = inline(<<"+foo+*bar*">>),
 	ok.
 -endif.
 

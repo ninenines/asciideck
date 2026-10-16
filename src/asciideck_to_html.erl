@@ -427,6 +427,12 @@ monospaced_test() ->
 	], #{line => 1}}],
 	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
 	<<"<p>Use <code>ok</code>.</p>\n">> = HTML,
+	Code = asciideck:parse("Use +lists:reverse/1+."),
+	CodeHTML = iolist_to_binary(translate(Code, #{no_header_footer => true})),
+	<<"<p>Use <code>lists:reverse/1</code>.</p>\n">> = CodeHTML,
+	Literal = asciideck:parse("See +x+y here."),
+	LiteralHTML = iolist_to_binary(translate(Literal, #{no_header_footer => true})),
+	<<"<p>See +x+y here.</p>\n">> = LiteralHTML,
 	ok.
 
 super_sub_test() ->
