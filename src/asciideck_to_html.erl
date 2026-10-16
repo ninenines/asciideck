@@ -143,6 +143,7 @@ admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
 admonition_body(AST=[{Type, _, _, _}|_])
 		when Type =/= link, Type =/= xref, Type =/= emphasized,
 			Type =/= strong, Type =/= inline_literal_passthrough,
+			Type =/= superscript, Type =/= subscript,
 			Type =/= line_break ->
 	ast(AST);
 admonition_body(Text) ->
@@ -313,6 +314,10 @@ inline({strong, _, Text, _}) ->
 	["<strong>", inline(Text), "</strong>"];
 inline({inline_literal_passthrough, _, Text, _}) ->
 	["<code>", inline(Text), "</code>"];
+inline({superscript, _, Text, _}) ->
+	["<sup>", inline(Text), "</sup>"];
+inline({subscript, _, Text, _}) ->
+	["<sub>", inline(Text), "</sub>"];
 inline({line_break, _, _, _}) ->
 	"<br/>";
 inline(Text) when is_list(Text) ->
@@ -385,6 +390,17 @@ admonition_title_test() ->
 		"<div class=\"content\">"
 		"<div class=\"title\">Watch out</div>\n"
 		"Be careful.</div></div>\n">> = HTML,
+	ok.
+
+super_sub_test() ->
+	AST = [{paragraph, #{}, [
+		<<"H">>,
+		{subscript, #{}, <<"2">>, inline},
+		<<"O and x">>,
+		{superscript, #{}, <<"10">>, inline}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>H<sub>2</sub>O and x<sup>10</sup></p>\n">> = HTML,
 	ok.
 
 admonition_inline_test() ->

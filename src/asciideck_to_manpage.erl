@@ -127,6 +127,7 @@ admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
 admonition_body(AST=[{Type, _, _, _}|_])
 		when Type =/= link, Type =/= xref, Type =/= emphasized,
 			Type =/= strong, Type =/= inline_literal_passthrough,
+			Type =/= superscript, Type =/= subscript,
 			Type =/= line_break ->
 	ast(AST);
 admonition_body(Text) ->
@@ -277,6 +278,10 @@ inline({strong, _, Text, _}) ->
 %% We are already using a monospace font.
 inline({inline_literal_passthrough, _, Text, _}) ->
 	inline(Text);
+inline({superscript, _, Text, _}) ->
+	["\\u", inline(Text), "\\d"];
+inline({subscript, _, Text, _}) ->
+	["\\d", inline(Text), "\\u"];
 %% Xref links appear as plain text in manuals.
 inline({xref, _, Text, _}) ->
 	inline(Text);

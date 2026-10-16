@@ -119,3 +119,21 @@ open_block_style(_) ->
 	{_, _} = binary:match(Man, <<"One.">>),
 	nomatch = binary:match(Man, <<"Ignored AST node">>),
 	ok.
+
+super_sub(_) ->
+	doc("Superscripts and subscripts are rendered in man pages. (10.2)"),
+	AST = asciideck:parse(
+		"= super(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"super - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"H~2~O and x^10^.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"H\\d2\\uO">>),
+	{_, _} = binary:match(Man, <<"x\\u10\\d.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.

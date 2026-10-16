@@ -124,6 +124,21 @@ quoted_text_unconstrained(_) ->
 	], _}] = parse("a _ b and __call__."),
 	ok.
 
+quoted_text_super_sub(_) ->
+	doc("Superscripts and subscripts. (10.2)"),
+	[{paragraph, _, [
+		<<"e">>,
+		{superscript, _, <<"pi">>, _},
+		<<"+1 and H">>,
+		{subscript, _, <<"2">>, _},
+		<<"O">>
+	], _}] = parse("e^pi^+1 and H~2~O"),
+	[{paragraph, _, [
+		<<"x">>,
+		{superscript, _, <<"10">>, _}
+	], _}] = parse("x^10^"),
+	ok.
+
 quoted_text_literal_mono(_) ->
 	doc("Literal monospace text formatting. (10.1)"),
 	[{paragraph, _, [{inline_literal_passthrough, _, <<"Hello beautiful world!">>, _}], _}] =

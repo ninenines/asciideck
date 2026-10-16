@@ -69,6 +69,8 @@ inline(Data, BinAcc, Acc) ->
 		%% and are tried before the constrained forms.
 		fun unconstrained_strong/2,
 		fun unconstrained_emphasis/2,
+		fun superscript/2,
+		fun subscript/2,
 		fun emphasized_single_quote/2,
 		fun emphasized_underline/2,
 		fun strong/2,
@@ -367,6 +369,37 @@ find_mark(Bin, C, From) ->
 			end
 	end.
 
+%% Asciidoc User Guide 10.2
+%%
+%% Superscript and subscript are unconstrained. The content
+%% has to be non-empty. "^^^" is a superscript of "^".
+%% "^^" is not a superscript.
+superscript(<<$^, Rest/bits>>, _) ->
+	single_mark(Rest, $^, superscript).
+subscript(<<$~, Rest/bits>>, _) ->
+	single_mark(Rest, $~, subscript).
+
+single_mark(Rest, C, Type) ->
+	Pos = single_closer(Rest, C, 0),
+	<<Content:Pos/binary, _:1/binary, Tail/bits>> = Rest,
+	{ok, {Type, #{}, inline(Content), inline}, Tail}.
+
+single_closer(Bin, C, From) ->
+	Size = byte_size(Bin),
+	case From >= Size of
+		true ->
+			error(nomatch);
+		false ->
+			case binary:match(Bin, <<C>>, [{scope, {From, Size - From}}]) of
+				nomatch ->
+					error(nomatch);
+				{0, 1} ->
+					single_closer(Bin, C, 1);
+				{Pos, 1} ->
+					Pos
+			end
+	end.
+
 %% Asciidoc User Guide 10.1
 %% @todo <<"\\*"
 emphasized_single_quote(Data, Prev) ->
@@ -519,6 +552,41 @@ unconstrained_test() ->
 		{strong, _, <<"**y">>, _},
 		<<" z">>
 	] = inline(<<"x ****y** z">>),
+	ok.
+-endif.
+
+-ifdef(TEST).
+super_sub_test() ->
+	[
+		<<"e">>,
+		{superscript, #{}, <<"pi">>, _},
+		<<"+1">>
+	] = inline(<<"e^pi^+1">>),
+	[
+		<<"H">>,
+		{subscript, #{}, <<"2">>, _},
+		<<"O">>
+	] = inline(<<"H~2~O">>),
+	[
+		<<"x">>,
+		{superscript, #{}, <<"10">>, _}
+	] = inline(<<"x^10^">>),
+	[{superscript, #{}, <<"super text">>, _}]
+		= inline(<<"^super text^">>),
+	[{superscript, #{}, <<" not ">>, _}] = inline(<<"^ not ^">>),
+	[{subscript, #{}, <<" not ">>, _}] = inline(<<"~ not ~">>),
+	<<"^^">> = inline(<<"^^">>),
+	<<"~~">> = inline(<<"~~">>),
+	[{superscript, #{}, <<"^">>, _}] = inline(<<"^^^">>),
+	[
+		<<"2">>,
+		{superscript, #{}, <<"3">>, _},
+		<<" and ^">>
+	] = inline(<<"2^3^ and ^">>),
+	[{strong, #{}, [
+		<<"x">>,
+		{superscript, #{}, <<"2">>, _}
+	], _}] = inline(<<"*x^2^*">>),
 	ok.
 -endif.
 
