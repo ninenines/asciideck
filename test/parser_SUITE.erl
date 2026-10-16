@@ -1279,6 +1279,156 @@ open_block_line(_) ->
 		"--\n"),
 	ok.
 
+open_block_style(_) ->
+	doc("Styles on an open block select the block type. (16.10)"),
+	%% listing is verbatim text. Children are not parsed.
+	[{listing_block, #{
+		1 := <<"listing">>,
+		<<"subs">> := <<"verbatim">>
+	}, <<"Hello *bold*.\n\n* One.">>, _}] = parse(
+		"[listing]\n"
+		"--\n"
+		"Hello *bold*.\n"
+		"\n"
+		"* One.\n"
+		"--\n"),
+	[{listing_block, _, <<"[source,erlang]\nf() -> ok.">>, _}] = parse(
+		"[listing]\n"
+		"--\n"
+		"[source,erlang]\n"
+		"f() -> ok.\n"
+		"--\n"),
+	%% Blank lines at either end are dropped. A space-only line is blank.
+	%% Trailing spaces on a content line stay.
+	[{listing_block, _, <<"Hi\n  x  ">>, _}] = parse(
+		"[listing]\n"
+		"--\n"
+		" \n"
+		"Hi\n"
+		"  x  \n"
+		"\n"
+		"--\n"),
+	[{literal_block, #{
+		1 := <<"literal">>,
+		<<"subs">> := <<"verbatim">>
+	}, <<"  Hello *bold*.">>, _}] = parse(
+		"[literal]\n"
+		"--\n"
+		"  Hello *bold*.\n"
+		"--\n"),
+	[{listing_block, #{
+		1 := <<"source">>,
+		2 := <<"erlang">>,
+		<<"subs">> := <<"verbatim">>
+	}, <<"f() -> *ok*.">>, #{line := 2}}] = parse(
+		"[source,erlang]\n"
+		"--\n"
+		"f() -> *ok*.\n"
+		"--\n"),
+	[{listing_block, #{<<"title">> := <<"Code">>}, <<"f() -> ok.">>, _}] = parse(
+		".Code\n"
+		"[listing]\n"
+		"--\n"
+		"f() -> ok.\n"
+		"--\n"),
+	[{listing_block, #{<<"title">> := <<"Code">>}, <<"f() -> ok.">>, _}] = parse(
+		"[listing]\n"
+		".Code\n"
+		"--\n"
+		"f() -> ok.\n"
+		"--\n"),
+	%% NOTE keeps parsed children.
+	[{admonition, #{style := <<"NOTE">>}, [
+		{paragraph, _, [
+			<<"Hello ">>,
+			{strong, _, <<"bold">>, _},
+			<<".">>
+		], _},
+		{list, #{type := bulleted}, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _}
+	], _}] = parse(
+		"[NOTE]\n"
+		"--\n"
+		"Hello *bold*.\n"
+		"\n"
+		"* One.\n"
+		"--\n"),
+	[{admonition, #{
+		style := <<"WARNING">>,
+		<<"title">> := <<"Watch">>
+	}, [
+		{paragraph, _, <<"Careful.">>, _}
+	], _}] = parse(
+		".Watch\n"
+		"[WARNING]\n"
+		"--\n"
+		"Careful.\n"
+		"--\n"),
+	[{admonition, #{style := <<"NOTE">>}, [
+		{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>},
+			<<"f() -> ok.">>, _}
+	], _}] = parse(
+		"[NOTE]\n"
+		"--\n"
+		"[source,erlang]\n"
+		"f() -> ok.\n"
+		"--\n"),
+	%% A table inside the admonition is still built.
+	[{admonition, #{style := <<"NOTE">>}, [
+		{table, _, [
+			{row, _, [
+				{cell, _, [{paragraph, _, <<"A">>, _}], _},
+				{cell, _, [{paragraph, _, <<"B">>, _}], _}
+			], _}
+		], _}
+	], _}] = parse(
+		"[NOTE]\n"
+		"--\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"
+		"--\n"),
+	%% Lower case is not an admonition style. raw does not leak.
+	[{open_block, #{1 := <<"note">>}, [
+		{paragraph, _, <<"Hello.">>, _}
+	], Ann}] = parse(
+		"[note]\n"
+		"--\n"
+		"Hello.\n"
+		"--\n"),
+	false = maps:is_key(raw, Ann),
+	%% A listing after + stays in the item, as text.
+	[{list, #{type := bulleted}, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{listing_block, #{<<"subs">> := <<"verbatim">>}, <<"* Two.">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"+\n"
+		"[listing]\n"
+		"--\n"
+		"* Two.\n"
+		"--\n"),
+	[{list, #{type := bulleted}, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{admonition, #{style := <<"TIP">>}, [
+				{list, #{type := bulleted}, [
+					{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+				], _}
+			], _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"+\n"
+		"[TIP]\n"
+		"--\n"
+		"* Two.\n"
+		"--\n"),
+	ok.
+
 %% Listing blocks.
 
 listing(_) ->

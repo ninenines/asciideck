@@ -30,6 +30,10 @@ run([Table={table, _, _, _}|Tail]) ->
 	[table(Table)|run(Tail)];
 run([{open_block, Attrs, Children, Ann}|Tail]) ->
 	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
+%% A NOTE open block is an admonition by this pass. Its body is
+%% a list of blocks, unlike an admonition paragraph.
+run([{admonition, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{admonition, Attrs, run(Children), Ann}|run(Tail)];
 run([Block|Tail]) ->
 	[Block|run(Tail)].
 

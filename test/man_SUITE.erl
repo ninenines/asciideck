@@ -89,3 +89,33 @@ admonition_paragraph(_) ->
 	{_, _} = binary:match(Man, <<"The static handler considers that the local filesystem is trusted.">>),
 	nomatch = binary:match(Man, <<"Ignored AST node">>),
 	ok.
+
+open_block_style(_) ->
+	doc("Styled open blocks are rendered in man pages. (16.10)"),
+	AST = asciideck:parse(
+		"= open(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"open - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[listing]\n"
+		"--\n"
+		"f() -> ok.\n"
+		"--\n"
+		"\n"
+		"[NOTE]\n"
+		"--\n"
+		"Careful.\n"
+		"\n"
+		"* One.\n"
+		"--\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"f() -> ok.">>),
+	{_, _} = binary:match(Man, <<"\\fBNote\\fR">>),
+	{_, _} = binary:match(Man, <<"Careful.">>),
+	{_, _} = binary:match(Man, <<"One.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.

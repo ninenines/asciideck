@@ -134,9 +134,19 @@ admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
 			_ ->
 				[]
 		end,
-		inline(Text),
+		admonition_body(Text),
 		"</div></div>\n"
 	].
+
+%% A paragraph admonition is text. An open-block admonition
+%% is a list of blocks. Inline nodes are not blocks.
+admonition_body(AST=[{Type, _, _, _}|_])
+		when Type =/= link, Type =/= xref, Type =/= emphasized,
+			Type =/= strong, Type =/= inline_literal_passthrough,
+			Type =/= line_break ->
+	ast(AST);
+admonition_body(Text) ->
+	inline(Text).
 
 admonition_label(<<C, Rest/bits>>) ->
 	[string:to_upper([C]), string:to_lower(binary_to_list(Rest))].
@@ -367,5 +377,47 @@ admonition_title_test() ->
 		"<div class=\"content\">"
 		"<div class=\"title\">Watch out</div>\n"
 		"Be careful.</div></div>\n">> = HTML,
+	ok.
+
+admonition_inline_test() ->
+	AST = [{admonition, #{style => <<"NOTE">>}, [
+		<<"Be ">>,
+		{strong, #{}, <<"bold">>, inline},
+		<<".">>
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">Be <strong>bold</strong>.</div></div>\n">> = HTML,
+	ok.
+
+open_listing_test() ->
+	AST = asciideck:parse(
+		"[listing]\n"
+		"--\n"
+		"f() -> ok.\n"
+		"--\n"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"listingblock\">"
+		"<div class=\"content\">"
+		"<pre>f() -&gt; ok.</pre>"
+		"</div></div>\n">> = HTML,
+	ok.
+
+open_note_test() ->
+	AST = asciideck:parse(
+		"[NOTE]\n"
+		"--\n"
+		"Hello *bold*.\n"
+		"\n"
+		"* One.\n"
+		"--\n"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">"
+		"<p>Hello <strong>bold</strong>.</p>\n"
+		"<ul><li>One.\n</li>\n</ul>\n"
+		"</div></div>\n">> = HTML,
 	ok.
 -endif.

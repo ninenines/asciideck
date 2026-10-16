@@ -117,10 +117,20 @@ admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
 		".RS 4\n"
 		"\\fB", Label, Title, "\\fR\n"
 		".br\n",
-		inline(Text), "\n"
+		admonition_body(Text), "\n"
 		".RE\n"
 		".sp\n"
 	].
+
+%% A paragraph admonition is text. An open-block admonition
+%% is a list of blocks. Inline nodes are not blocks.
+admonition_body(AST=[{Type, _, _, _}|_])
+		when Type =/= link, Type =/= xref, Type =/= emphasized,
+			Type =/= strong, Type =/= inline_literal_passthrough,
+			Type =/= line_break ->
+	ast(AST);
+admonition_body(Text) ->
+	inline(Text).
 
 admonition_label(<<C, Rest/bits>>) ->
 	[string:to_upper([C]), string:to_lower(binary_to_list(Rest))].

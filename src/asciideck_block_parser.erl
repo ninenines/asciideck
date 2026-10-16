@@ -1079,6 +1079,8 @@ open_block(St) ->
 	Ann = ann(St),
 	%% Keep a leading empty line in the slice. The nested parse
 	%% skips it, and the line offset then matches the file.
+	%% raw is that slice. listing, literal, and source styles
+	%% render it instead of the parsed children.
 	Block = read_while(St, fun fold_open_block/1, <<>>, keep),
 	%% Skip the closing delimiter when present.
 	_ = read_line(St),
@@ -1087,7 +1089,7 @@ open_block(St) ->
 		<<>> -> [];
 		_ -> parse(Block, maps:get(line, Ann))
 	end,
-	{open_block, #{}, Children, Ann}.
+	{open_block, #{}, Children, Ann#{raw => Block}}.
 
 fold_open_block(eof) ->
 	done;
