@@ -159,7 +159,7 @@ list({list, #{type := bulleted}, Items, _}) ->
 list({list, #{type := labeled}, Items, _}) ->
 	fold(Items, fun labeled_list_item/1);
 list({list, #{type := callout}, Items, _}) ->
-	fold(Items, fun callout_list_item/1).
+	callout_items(Items, 1).
 
 bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
@@ -177,13 +177,17 @@ bulleted_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 		".RE\n"
 	].
 
-callout_list_item({list_item, Attrs, [{paragraph, _, Text, _}|AST], _}) ->
-	Num = case Attrs of
-		#{number := N} when is_integer(N) -> integer_to_list(N);
-		_ -> "1"
-	end,
+%% User Guide 20. The rendered number is the item's position.
+%% The source marker is not used. AsciiDoc warns when an
+%% explicit marker does not match that position.
+callout_items([], _) ->
+	[];
+callout_items([Item|Items], N) ->
+	[callout_list_item(Item, N)|callout_items(Items, N + 1)].
+
+callout_list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}, N) ->
 	[
-		".IP ", Num, "\n",
+		".IP ", integer_to_list(N), "\n",
 		inline(Text), "\n",
 		ast(AST)
 	].

@@ -30,7 +30,7 @@ missing_name_section(_) ->
 	ok.
 
 callout_list(_) ->
-	doc("Callout lists are rendered in man pages. (20)"),
+	doc("Callout lists are numbered by position. (20)"),
 	AST = asciideck:parse(
 		"= callout(3)\n"
 		"\n"
@@ -40,9 +40,14 @@ callout_list(_) ->
 		"\n"
 		"== Description\n"
 		"\n"
-		"<1> This directory holds MS-DOS.\n"),
+		"> First.\n"
+		"> Second.\n"
+		"<9> Third.\n"),
 	Man = iolist_to_binary(asciideck:to_manpage(AST)),
-	{_, _} = binary:match(Man, <<"This directory holds MS-DOS.">>),
+	{_, _} = binary:match(Man, <<".IP 1\nFirst.">>),
+	{_, _} = binary:match(Man, <<".IP 2\nSecond.">>),
+	{_, _} = binary:match(Man, <<".IP 3\nThird.">>),
+	nomatch = binary:match(Man, <<".IP 9">>),
 	nomatch = binary:match(Man, <<"Ignored AST node">>),
 	ok.
 
