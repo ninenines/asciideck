@@ -1207,40 +1207,69 @@ literal_para(St) ->
 	<<C, _/bits>> = Line0 = read_line(St),
 	true = ?IS_WS(C),
 	Ann = ann(St),
-	{Indent, Line1} = split_indent(Line0),
-	%% Further lines belong to the same paragraph while they stay indented.
-	%% Only the first line's indent is stripped, so relative indent is kept.
-	Para = read_while(St, fun(L) -> fold_literal_para(L, Indent) end,
-		trim(Line1, trailing)),
-	{literal_paragraph, #{<<"subs">> => <<"verbatim">>}, Para, Ann}.
+	%% Keep every indented line, then strip the minimum indent.
+	%% A later line may be indented less than the first.
+	Lines = literal_lines(St, [trim(Line0, trailing)]),
+	{literal_paragraph, #{<<"subs">> => <<"verbatim">>},
+		literal_text(Lines), Ann}.
 
-split_indent(Line) ->
-	split_indent(Line, <<>>).
-
-split_indent(<<C, R/bits>>, Acc) when ?IS_WS(C) ->
-	split_indent(R, <<Acc/binary, C>>);
-split_indent(Rest, Acc) ->
-	{Acc, Rest}.
-
-strip_indent(Line, <<>>) ->
-	Line;
-strip_indent(<<C, R/bits>>, <<C, IR/bits>>) ->
-	strip_indent(R, IR);
-strip_indent(Line, _) ->
-	Line.
-
-fold_literal_para(eof, _) ->
-	done;
-fold_literal_para(Line0, Indent) ->
-	case trim(Line0) of
-		<<>> -> done;
-		_ ->
-			<<C, _/bits>> = Line0,
-			case ?IS_WS(C) of
-				true -> {more, trim(strip_indent(Line0, Indent), trailing)};
-				false -> done
+literal_lines(St=#state{reader=ReaderPid}, Acc) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	case read_line(St) of
+		eof ->
+			lists:reverse(Acc);
+		Line0 ->
+			case trim(Line0) of
+				<<>> ->
+					asciideck_reader:set_position(ReaderPid, Ln),
+					lists:reverse(Acc);
+				_ ->
+					<<C, _/bits>> = Line0,
+					case ?IS_WS(C) of
+						true ->
+							literal_lines(St, [trim(Line0, trailing)|Acc]);
+						false ->
+							asciideck_reader:set_position(ReaderPid, Ln),
+							lists:reverse(Acc)
+					end
 			end
 	end.
+
+%% Default tab size is 8. Tabs are expanded before the minimum
+%% indent is measured, so a tab and spaces agree on one column.
+%% A column is one Unicode code point, as in str.expandtabs.
+literal_text(Lines) ->
+	Expanded = [expand_tabs(Line, 0, <<>>) || Line <- Lines],
+	Min = lists:min([count_indent(Line) || Line <- Expanded]),
+	join_lines([strip_n(Line, Min) || Line <- Expanded]).
+
+expand_tabs(<<$\t, Rest/bits>>, Col, Acc) ->
+	N = 8 - (Col rem 8),
+	expand_tabs(Rest, Col + N, <<Acc/binary, (spaces(N))/binary>>);
+expand_tabs(<<C/utf8, Rest/bits>>, Col, Acc) ->
+	expand_tabs(Rest, Col + 1, <<Acc/binary, C/utf8>>);
+expand_tabs(<<C, Rest/bits>>, Col, Acc) ->
+	expand_tabs(Rest, Col + 1, <<Acc/binary, C>>);
+expand_tabs(<<>>, _, Acc) ->
+	Acc.
+
+spaces(N) ->
+	binary:copy(<<" ">>, N).
+
+count_indent(<<$\s, Rest/bits>>) ->
+	1 + count_indent(Rest);
+count_indent(_) ->
+	0.
+
+strip_n(<<$\s, Rest/bits>>, N) when N > 0 ->
+	strip_n(Rest, N - 1);
+strip_n(Line, _) ->
+	Line.
+
+join_lines([Line]) ->
+	Line;
+join_lines([Line|Rest]) ->
+	<<Line/binary, $\n, (join_lines(Rest))/binary>>.
 
 -ifdef(TEST).
 literal_para_test() ->
@@ -1257,11 +1286,43 @@ literal_para_test() ->
 	%% Tabs also count as indentation.
 	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>}, <<"Hello!">>, _}]
 		= parse(<<"\tHello!">>),
-	%% Relative indentation is preserved.
+	%% Relative indentation is preserved, including a shorter later line.
 	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
 		<<"foo() ->\n    ok.">>, _}] = parse(<<
 			"  foo() ->\n"
 			"      ok.">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"  foo\nbar\n  baz">>, _}] = parse(<<
+			"    foo\n"
+			"  bar\n"
+			"    baz">>),
+	%% A tab advances to the next column that is a multiple of 8.
+	%% Eight spaces and a tab are the same indent. A tab after
+	%% four spaces also stops at column 8.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo\n    bar">>, _}] = parse(<<
+			"\tfoo\n"
+			"\t    bar">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo\nbar">>, _}] = parse(<<
+			"\tfoo\n"
+			"        bar">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo\nbar">>, _}] = parse(<<
+			"    \tfoo\n"
+			"        bar">>),
+	%% A tab in the text also stops at the next column.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"a     b">>, _}] = parse(<<"  a\tb">>),
+	%% The column is a code point. U+00E9 is two bytes; the tab
+	%% is at column 6 and expands to two spaces.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"caf", 195, 169, "  X">>, _}] = parse(<<
+			"  caf", 195, 169, "\tX">>),
+	%% U+20AC is three bytes. The tab is at column 2.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<226, 130, 172, "      X">>, _}] = parse(<<
+			" ", 226, 130, 172, "\tX">>),
 	%% Indented // and + are literal text, not comments or continuations.
 	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
 		<<"x = 1\n// increment\nx = x + 1\n+">>, _}] = parse(<<
