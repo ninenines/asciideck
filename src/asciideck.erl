@@ -44,10 +44,13 @@ parse(Data) ->
 	parse(Data, #{}).
 
 parse(Data, _St) ->
+	%% Lists run before styles are rewritten. An indented
+	%% paragraph is a list child even when a style then
+	%% turns it into a listing or an admonition.
 	Passes = [
 		asciideck_attributes_pass,
-		asciideck_transform_pass,
 		asciideck_lists_pass,
+		asciideck_transform_pass,
 		asciideck_tables_pass,
 		asciideck_inline_pass
 	],

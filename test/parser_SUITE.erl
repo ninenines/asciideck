@@ -451,6 +451,596 @@ literal_paragraph_in_list(_) ->
 		"  Fusce euismod commodo velit.\n"),
 	ok.
 
+titled_literal_not_in_list(_) ->
+	doc("A block title ends the list. A continuation keeps the block. (17.7)"),
+	[
+		{list, #{type := bulleted}, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{literal_paragraph, #{<<"title">> := <<"Code">>}, <<"foo()">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Code\n"
+		"  foo()\n"),
+	[{list, #{type := bulleted}, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{literal_paragraph, #{<<"title">> := <<"Code">>}, <<"foo()">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"+\n"
+		".Code\n"
+		"  foo()\n"),
+	%% A title attribute does not end the list.
+	[{list, #{type := bulleted}, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{literal_paragraph, #{<<"title">> := <<"Code">>}, <<"foo()">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"\n"
+		"[title=\"Code\"]\n"
+		"  foo()\n"),
+	%% The indented paragraph is a child. The style is applied after.
+	[{list, #{type := bulleted}, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>}, <<"foo().">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"\n"
+		"[source,erlang]\n"
+		"  foo().\n"),
+	[{list, #{type := bulleted}, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{admonition, #{style := <<"NOTE">>}, <<"Careful.">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"\n"
+		"[NOTE]\n"
+		"  Careful.\n"),
+	ok.
+
+titled_list_ends(_) ->
+	doc("A title line ends the list before the next item. (17.7)"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{list, #{<<"title">> := <<"Title">>}, [
+			{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+		], _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"* Two.\n"),
+	[
+		{list, _, [
+			{list_item, _, [
+				{paragraph, _, <<"One.">>, _},
+				{list, _, [
+					{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+				], _}
+			], _}
+		], _},
+		{list, #{<<"title">> := <<"Title">>}, [
+			{list_item, _, [{paragraph, _, <<"Three.">>, _}], _}
+		], _}
+	] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"* Three.\n"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{list, #{<<"title">> := <<"Title">>}, [
+			{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+		], _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"** Two.\n"),
+	%% A continuation does not keep an item of the same list.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{list, #{<<"title">> := <<"Title">>}, [
+			{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+		], _}
+	] = parse(
+		"* One.\n"
+		"+\n"
+		".Title\n"
+		"* Two.\n"),
+	%% A continuation does keep a deeper list, title included.
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{list, #{<<"title">> := <<"Title">>}, [
+				{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+			], _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"+\n"
+		".Title\n"
+		"** Two.\n"),
+	%% A title before + is not a continuation. The + starts
+	%% the next paragraph, and a list marker stays in it.
+	%% The inline pass turns the newline after + into a space.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"+ Second paragraph.">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"Second paragraph.\n"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"+ ** Two.">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"** Two.\n"),
+	%% The inner list ends. The parent item takes the +.
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{list, _, [
+				{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+			], _},
+			{paragraph, #{<<"title">> := <<"Title">>}, <<"Para.">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"Para.\n"),
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{list, _, [
+				{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+			], _},
+			{list, #{<<"title">> := <<"Title">>}, [
+				{list_item, _, [{paragraph, _, <<"Three.">>, _}], _}
+			], _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"** Three.\n"),
+	ok.
+
+%% A title before + makes the + paragraph text. The paragraph
+%% reader keeps the following lines. A parent list can still
+%% use that + as a continuation.
+
+titled_plus_paragraph(_) ->
+	doc("A title before + keeps the original paragraph lines. (15.1, 17.7)"),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"  foo()\n",
+		<<"+   foo()">>),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"NOTE: careful\n"
+		"still\n",
+		<<"+ NOTE: careful still">>),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		".Other\n"
+		"text\n",
+		<<"+ .Other text">>),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"Term::\n"
+		"  definition\n"
+		"** Two.\n",
+		<<"+ Term::   definition ** Two.">>),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"1> callout text\n",
+		<<"+ 1> callout text">>),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"*** Three.\n",
+		<<"+ *** Three.">>),
+	%% A comment is skipped. The lines around it stay one paragraph.
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"// note\n"
+		"text\n",
+		<<"+ text">>),
+	%% A delimited block ends the paragraph.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"+">>, _},
+		{table, _, _, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"|===\n"
+		"|A\n"
+		"|===\n"),
+	%% An attribute list ends the paragraph too.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"+ text">>, _},
+		{admonition, #{style := <<"NOTE">>}, <<"Careful.">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"text\n"
+		"[NOTE]\n"
+		"Careful.\n"),
+	%% The style written with the title applies to this paragraph.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{listing_block, #{
+			<<"title">> := <<"Title">>,
+			1 := <<"source">>,
+			2 := <<"erlang">>
+		}, <<"+\ncode">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"[source,erlang]\n"
+		"+\n"
+		"code\n"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{listing_block, #{
+			<<"title">> := <<"Title">>,
+			1 := <<"source">>,
+			2 := <<"erlang">>
+		}, <<"+\ncode">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		"[source,erlang]\n"
+		".Title\n"
+		"+\n"
+		"code\n"),
+	%% The parent item takes the +. The listing is only the code.
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{list, _, [
+				{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+			], _},
+			{listing_block, #{
+				<<"title">> := <<"Title">>,
+				1 := <<"source">>,
+				2 := <<"erlang">>
+			}, <<"code">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"[source,erlang]\n"
+		"+\n"
+		"code\n"),
+	%% Nothing after the + continues the parent and adds nothing.
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{list, _, [
+				{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+			], _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"+\n"),
+	%% A second + is its own paragraph.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"+ line">>, _},
+		{paragraph, MoreAttrs, <<"+ more">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"line\n"
+		"+\n"
+		"more\n"),
+	false = maps:is_key(<<"title">>, MoreAttrs),
+	ok.
+
+%% A delimiter or an attribute list ends the lines kept after +.
+%% An attribute list before + ends the list. A second + is text.
+
+plus_stops_before_delimiter(_) ->
+	doc("A block after + stays when the paragraph reader stops. (15.1, 17.7)"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"+ * Two.">>, _},
+		{listing_block, _, <<"code">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"* Two.\n"
+		"----\n"
+		"code\n"
+		"----\n"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"+ * Two.">>, _},
+		{admonition, #{style := <<"NOTE">>}, <<"Careful.">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"* Two.\n"
+		"[NOTE]\n"
+		"Careful.\n"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>},
+			<<"+ Term::   definition">>, _},
+		{listing_block, _, <<"code">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"Term::\n"
+		"  definition\n"
+		"----\n"
+		"code\n"
+		"----\n"),
+	[
+		{paragraph, _, <<"+ * Two.">>, _},
+		{listing_block, _, <<"code">>, _}
+	] = parse(
+		"+\n"
+		"* Two.\n"
+		"----\n"
+		"code\n"
+		"----\n"),
+	%% The first + continues the item. The second + is text.
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{paragraph, #{<<"title">> := <<"Title">>}, <<"+ text">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"+\n"
+		".Title\n"
+		"+\n"
+		"text\n"),
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{paragraph, _, <<"+ text">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"+\n"
+		"+\n"
+		"text\n"),
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{list, _, [
+				{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+			], _},
+			{paragraph, #{<<"title">> := <<"Title">>}, <<"+ more">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"+\n"
+		"more\n"),
+	%% An attribute list before + is not a continuation.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>},
+			<<"+\ncode">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		"[source,erlang]\n"
+		"+\n"
+		"code\n"),
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>},
+			<<"+\ncode">>, _}
+	] = parse(
+		"* One.\n"
+		"[source,erlang]\n"
+		"+\n"
+		"code\n"),
+	%% The inline pass turns the newline after + into a space.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{admonition, #{style := <<"NOTE">>}, <<"+ Careful.">>, _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		"[NOTE]\n"
+		"+\n"
+		"Careful.\n"),
+	%% The parent still continues. The style applies to the code.
+	[{list, _, [
+		{list_item, _, [
+			{paragraph, _, <<"One.">>, _},
+			{list, _, [
+				{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+			], _},
+			{listing_block, #{1 := <<"source">>, 2 := <<"erlang">>},
+				<<"code">>, _}
+		], _}
+	], _}] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		"[source,erlang]\n"
+		"+\n"
+		"code\n"),
+	%% An indented + is a line break inside the same paragraph.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, [
+			<<"+  ">>,
+			{line_break, _, <<>>, _},
+			<<"more">>
+		], _}
+	] = parse(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"  +\n"
+		"more\n"),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"  // not a comment\n"
+		"text\n",
+		<<"+   // not a comment text">>),
+	titled_plus(
+		"* One.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"/// not comment\n"
+		"text\n",
+		<<"+ /// not comment text">>),
+	%% A comment or an attribute entry uses up the + and the list ends.
+	[
+		{list, _, [
+			{list_item, _, [
+				{paragraph, _, <<"One.">>, _},
+				{list, _, [
+					{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+				], _}
+			], _}
+		], _},
+		{comment_line, CommentAttrs, <<"comment">>, _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"Para.">>, _}
+	] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		"// comment\n"
+		"Para.\n"),
+	false = maps:is_key(<<"title">>, CommentAttrs),
+	[
+		{list, _, [
+			{list_item, _, [
+				{paragraph, _, <<"One.">>, _},
+				{list, _, [
+					{list_item, _, [{paragraph, _, <<"Two.">>, _}], _}
+				], _}
+			], _}
+		], _},
+		{attribute_entry, EntryAttrs, <<"Loic">>, _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"Para.">>, _}
+	] = parse(
+		"* One.\n"
+		"** Two.\n"
+		"\n"
+		".Title\n"
+		"+\n"
+		":author: Loic\n"
+		"Para.\n"),
+	false = maps:is_key(<<"title">>, EntryAttrs),
+	ok.
+
 %% Admonition paragraphs.
 
 admonition_paragraph(_) ->
@@ -1031,3 +1621,12 @@ table_cell_line(_) ->
 
 %% @todo Check attributes also.
 %% @todo Plenty more cases to test for tables.
+
+%% Not a test. Arity 2 so ct_helper:all/1 does not pick it up.
+titled_plus(Input, Body) ->
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, Body, _}
+	] = parse(Input).

@@ -310,6 +310,8 @@ strong(Data, Prev) ->
 
 quoted_text(<<Left, Rest0/bits>>, Prev, Type, Left, Right) when ?IS_BOUNDARY(Prev) ->
 	{Content, <<Right, Rest/bits>>} = while(fun(C) -> C =/= Right end, Rest0),
+	%% "**" is not strong. The content has to be non-empty.
+	true = Content =/= <<>>,
 	{ok, {Type, #{
 		left => Left,
 		right => Right
@@ -341,6 +343,8 @@ strong_test() ->
 		"Word phrases *enclosed in asterisk characters* "
 		"are rendered in a strong font (usually bold)."
 	>>),
+	<<"** Two.">> = inline(<<"** Two.">>),
+	<<"*** Three.">> = inline(<<"*** Three.">>),
 	ok.
 -endif.
 

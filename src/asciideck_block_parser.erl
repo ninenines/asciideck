@@ -654,7 +654,8 @@ list_item(St, Attrs, ListItem0) ->
 		_ ->
 			ok
 	end,
-	%% A list item ends on end of file, empty line or when a new list starts.
+	%% A list item ends on end of file, an empty line, another
+	%% list, an attribute list, or a delimited block.
 	%% Any indentation is optional and therefore removed.
 	ListItem = read_while(St, fun fold_list_item/1, ListItem1),
 	{list_item, Attrs, [{paragraph, #{}, ListItem, Ann}], Ann}.
@@ -686,13 +687,21 @@ fold_list_item(Line0) ->
 		<<"....", C, _/bits>> when ?IS_WS(C) -> done;
 		<<".....", C, _/bits>> when ?IS_WS(C) -> done;
 		Line ->
-			try find_labeled_list(Line) of
-				{_, _, _} -> done
-			catch _:_ ->
-				case is_callout_line(Line0) of
-					true -> done;
-					false -> {more, Line}
-				end
+			%% Same terminators as a paragraph, except list markers,
+			%% which this reader stops for above. A block title is
+			%% not one of them.
+			case attribute_list_line(Line0) orelse delimited_line(Line0) of
+				true ->
+					done;
+				false ->
+					try find_labeled_list(Line) of
+						{_, _, _} -> done
+					catch _:_ ->
+						case is_callout_line(Line0) of
+							true -> done;
+							false -> {more, Line}
+						end
+					end
 			end
 	end.
 
@@ -728,6 +737,17 @@ list_item_test() ->
 		"* List item.\n"
 		"Multiline.\n"
 		"Question:: Answer!\n">>),
+	%% An attribute list or a delimited block ends the item.
+	[
+		{list_item, _, [{paragraph, _, <<"One.">>, _}], _},
+		{attribute_list, _, _, _},
+		{list_item_continuation, _, _, _},
+		{paragraph, _, <<"code">>, _}
+	] = parse(<<"* One.\n[source,erlang]\n+\ncode\n">>),
+	[
+		{list_item, _, [{paragraph, _, <<"One.">>, _}], _},
+		{listing_block, _, <<"code">>, _}
+	] = parse(<<"* One.\n----\ncode\n----\n">>),
 	ok.
 -endif.
 
@@ -736,13 +756,124 @@ list_item_continuation(St) ->
 	%% Continuations are a single + hard against the left margin.
 	<<$+, Whitespace/bits>> = read_line(St),
 	<<>> = trim(Whitespace),
-	{list_item_continuation, #{}, <<>>, ann(St)}.
+	Ann = ann(St),
+	%% The lists pass may turn this + into a paragraph. Capture
+	%% the lines the paragraph reader would keep, then rewind so
+	%% those lines are still parsed as blocks for a real continuation.
+	{Raw, RawLast} = plus_raw(St, maps:get(line, Ann)),
+	{list_item_continuation, #{}, <<>>, Ann#{raw => Raw, raw_last => RawLast}}.
+
+%% Paragraph terminators are a blank line, a + hard against
+%% the left margin, an attribute list, or a delimited block.
+%% A // comment at the left margin is skipped. List markers
+%% and block titles are kept: this reader is not the one
+%% that ends a paragraph at a list.
+plus_raw(St=#state{reader=ReaderPid}, Line) ->
+	Start = asciideck_reader:get_position(ReaderPid),
+	{Lines, Count} = collect_plus_lines(St, [], 0),
+	asciideck_reader:set_position(ReaderPid, Start),
+	{join_plus_lines([<<"+">>|Lines]), Line + Count}.
+
+collect_plus_lines(St, Acc, Count) ->
+	case read_line(St) of
+		eof ->
+			{lists:reverse(Acc), Count};
+		Line ->
+			case classify_plus_line(Line) of
+				stop ->
+					{lists:reverse(Acc), Count};
+				skip ->
+					collect_plus_lines(St, Acc, Count + 1);
+				keep ->
+					collect_plus_lines(St, [trim(Line, trailing)|Acc], Count + 1)
+			end
+	end.
+
+classify_plus_line(Line) ->
+	case plus_line_end(Line) of
+		true ->
+			stop;
+		false ->
+			case is_margin_comment(Line) of
+				true -> skip;
+				false -> keep
+			end
+	end.
+
+%% Only a + in column 0 ends the paragraph. Indent stays text.
+plus_line_end(Line0) ->
+	case trim(Line0, trailing) of
+		<<>> -> true;
+		<<"+">> -> true;
+		_ ->
+			attribute_list_line(Line0) orelse delimited_line(Line0)
+	end.
+
+%% ^//([^/].*)?$ after trailing space is removed. /// is text.
+is_margin_comment(Line0) ->
+	case trim(Line0, trailing) of
+		<<"//">> ->
+			true;
+		<<"//", C, _/bits>> when C =/= $/ ->
+			true;
+		_ ->
+			false
+	end.
+
+join_plus_lines([Line]) ->
+	Line;
+join_plus_lines([Line|Rest]) ->
+	<<Line/binary, $\n, (join_plus_lines(Rest))/binary>>.
 
 -ifdef(TEST).
 list_item_continuation_test() ->
 	[{list_item_continuation, _, _, _}] = parse(<<"+">>),
 	[{list_item_continuation, _, _, _}] = parse(<<"+   ">>),
 	[{list_item_continuation, _, _, _}] = parse(<<"+\n">>),
+	%% The following lines stay blocks. raw keeps the paragraph text.
+	[
+		{list_item_continuation, _, _, #{raw := <<"+\n  foo()">>, raw_last := 2}},
+		{literal_paragraph, _, <<"foo()">>, #{line := 2}}
+	] = parse(<<"+\n  foo()\n">>),
+	%% A comment is not paragraph text, but it is part of the span.
+	[
+		{list_item_continuation, _, _, #{raw := <<"+\ntext">>, raw_last := 3}},
+		{comment_line, _, <<"note">>, #{line := 2}},
+		{paragraph, _, <<"text">>, #{line := 3}}
+	] = parse(<<"+\n// note\ntext\n">>),
+	%% An indented + or // is text. /// is not a comment either.
+	[
+		{list_item_continuation, _, _, #{raw := <<"+\n  +\nmore">>}},
+		{literal_paragraph, _, <<"+">>, _},
+		{paragraph, _, <<"more">>, _}
+	] = parse(<<"+\n  +\nmore\n">>),
+	[
+		{list_item_continuation, _, _, #{
+			raw := <<"+\n  // not a comment\ntext">>
+		}},
+		{literal_paragraph, _, <<"// not a comment">>, _},
+		{paragraph, _, <<"text">>, _}
+	] = parse(<<"+\n  // not a comment\ntext\n">>),
+	%% /// matches the comment parser. raw still keeps the line.
+	[
+		{list_item_continuation, _, _, #{
+			raw := <<"+\n/// not comment\ntext">>
+		}},
+		{comment_line, _, <<"/ not comment">>, _},
+		{paragraph, _, <<"text">>, _}
+	] = parse(<<"+\n/// not comment\ntext\n">>),
+	%% The snapshot keeps the source lines. The blocks are still parsed.
+	[
+		{list_item_continuation, _, _, #{
+			raw := <<"+\nNOTE: careful\nstill">>,
+			raw_last := 3
+		}},
+		{admonition, _, <<"careful\nstill">>, #{line := 2}}
+	] = parse(<<"+\nNOTE: careful\nstill\n">>),
+	[
+		{list_item_continuation, _, _, #{raw := <<"+">>, raw_last := 1}},
+		{table, _, _, #{line := 2}}
+	] = parse(<<"+\n|===\n|A\n|===\n">>),
 	ok.
 -endif.
 

@@ -44,6 +44,10 @@ run([{Type, Attrs0=#{1 := Style}, Text, Ann}|Tail])
 	[{admonition, Attrs, Text, Ann}|run(Tail)];
 run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
+run([{list, Attrs, Items, Ann}|Tail]) ->
+	[{list, Attrs, run(Items), Ann}|run(Tail)];
+run([{list_item, Attrs, Children, Ann}|Tail]) ->
+	[{list_item, Attrs, run(Children), Ann}|run(Tail)];
 run([Block|Tail]) ->
 	[Block|run(Tail)].
 

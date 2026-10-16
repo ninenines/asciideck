@@ -29,9 +29,12 @@ run([{block_id, #{id := ID}, <<>>, _}|Tail0]) ->
 	run(Tail);
 %% A block title is ultimately treated as an attribute
 %% for the following block.
-run([{block_title, _, Title, _}|Tail0]) ->
-	Tail = apply_attributes(Tail0, #{<<"title">> => Title}),
-	run(Tail);
+%% block_title marks a title line (".Title"), as opposed to
+%% a title attribute. The lists pass uses the mark, then
+%% removes it. A continuation keeps the mark: the title
+%% came before the +, so it is not dropped.
+run([{block_title, _, Title, _}|Tail]) ->
+	run(apply_block_title(Tail, #{<<"title">> => Title, block_title => true}));
 run([{attribute_list, Attrs, <<>>, _}|Tail0]) ->
 	Tail = apply_attributes(Tail0, Attrs),
 	run(Tail);
@@ -39,6 +42,22 @@ run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
 run([Block|Tail]) ->
 	[Block|run(Tail)].
+
+%% A continuation is not the titled block. Keep the mark on
+%% it so the lists pass can tell the title from a later +.
+apply_block_title([], _) ->
+	[];
+apply_block_title([{list_item_continuation, Attrs, Body, Ann}|Tail], TitleAttrs) ->
+	[{list_item_continuation, maps:merge(Attrs, TitleAttrs), Body, Ann}|Tail];
+apply_block_title(AST=[Element={Type, _, _, _}|Tail], TitleAttrs) ->
+	case can_apply(Type) of
+		drop ->
+			AST;
+		skip ->
+			[Element|apply_block_title(Tail, TitleAttrs)];
+		apply ->
+			apply_attributes(AST, TitleAttrs)
+	end.
 
 %% Find the next block to apply the attributes.
 apply_attributes([], _) ->
@@ -57,8 +76,10 @@ apply_attributes(AST=[Element0={Type, Attrs0, Content, Ann}|Tail], Attrs) ->
 %% Block macros already come with a mandatory attribute list.
 %% Just to play it safe we drop the attributes for now.
 can_apply(block_macro) -> drop;
-%% If we hit a list item continuation, drop the attributes for now.
-can_apply(list_item_continuation) -> drop;
+%% A continuation carries attributes that were written before
+%% the +. The lists pass moves them onto the continued block,
+%% or onto the paragraph when the + is text.
+can_apply(list_item_continuation) -> apply;
 %% We skip attribute lists and alike and let it sort itself out.
 can_apply(block_id) -> skip;
 can_apply(attribute_list) -> skip;
@@ -107,10 +128,63 @@ block_title_test() ->
 	],
 	AST = [
 		{listing_block, #{
-			<<"title">> => <<"Title">>
+			<<"title">> => <<"Title">>,
+			block_title => true
 		}, <<"Hello!">>, #{line => 2}}
 	],
 	AST = run(AST0),
+	ok.
+
+style_continuation_test() ->
+	Source = #{1 => <<"source">>, 2 => <<"erlang">>},
+	TitleFirst = [
+		{block_title, #{}, <<"Title">>, #{line => 1}},
+		{attribute_list, Source, <<>>, #{line => 2}},
+		{list_item_continuation, #{}, <<>>, #{line => 3}},
+		{paragraph, #{}, <<"code">>, #{line => 4}}
+	],
+	StyleFirst = [
+		{attribute_list, Source, <<>>, #{line => 1}},
+		{block_title, #{}, <<"Title">>, #{line => 2}},
+		{list_item_continuation, #{}, <<>>, #{line => 3}},
+		{paragraph, #{}, <<"code">>, #{line => 4}}
+	],
+	[
+		{list_item_continuation, #{
+			1 := <<"source">>,
+			2 := <<"erlang">>,
+			<<"title">> := <<"Title">>,
+			block_title := true
+		}, <<>>, _},
+		{paragraph, #{}, <<"code">>, _}
+	] = run(TitleFirst),
+	[
+		{list_item_continuation, #{
+			1 := <<"source">>,
+			2 := <<"erlang">>,
+			<<"title">> := <<"Title">>,
+			block_title := true
+		}, <<>>, _},
+		{paragraph, #{}, <<"code">>, _}
+	] = run(StyleFirst),
+	ok.
+
+block_title_continuation_test() ->
+	AST0 = [
+		{block_title, #{}, <<"Title">>, #{line => 1}},
+		{attribute_entry, #{name => <<"author">>, unset => false},
+			<<"Loic">>, #{line => 2}},
+		{list_item_continuation, #{}, <<>>, #{line => 3}},
+		{paragraph, #{}, <<"Second.">>, #{line => 4}}
+	],
+	[
+		{attribute_entry, #{name := <<"author">>}, <<"Loic">>, _},
+		{list_item_continuation, #{
+			<<"title">> := <<"Title">>,
+			block_title := true
+		}, <<>>, _},
+		{paragraph, #{}, <<"Second.">>, _}
+	] = run(AST0),
 	ok.
 
 attribute_entry_skip_test() ->
@@ -123,7 +197,8 @@ attribute_entry_skip_test() ->
 	AST = [
 		{attribute_entry, #{name => <<"author">>, unset => false},
 			<<"Loic">>, #{line => 2}},
-		{paragraph, #{<<"title">> => <<"Title">>}, <<"Hello!">>, #{line => 3}}
+		{paragraph, #{<<"title">> => <<"Title">>, block_title => true},
+			<<"Hello!">>, #{line => 3}}
 	],
 	AST = run(AST0),
 	ok.
