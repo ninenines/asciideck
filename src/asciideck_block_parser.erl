@@ -582,13 +582,21 @@ callout_list(St) ->
 %% <1> annotation
 %% 1> annotation
 %% > annotation (implicit numbering)
-callout_marker(<<"<", C, Rest/bits>>) when C >= $0, C =< $9 ->
+%% User Guide 20: optional <, digits, >, whitespace, then item text.
+callout_marker(Line) ->
+	{Number, Rest} = callout_prefix(Line),
+	<<C, Item/bits>> = Rest,
+	true = ?IS_WS(C),
+	true = trim(Item) =/= <<>>,
+	{Number, Rest}.
+
+callout_prefix(<<"<", C, Rest/bits>>) when C >= $0, C =< $9 ->
 	{Num, <<">", R/bits>>} = while(fun is_digit/1, <<C, Rest/bits>>),
 	{binary_to_integer(Num), R};
-callout_marker(<<C, Rest/bits>>) when C >= $0, C =< $9 ->
+callout_prefix(<<C, Rest/bits>>) when C >= $0, C =< $9 ->
 	{Num, <<">", R/bits>>} = while(fun is_digit/1, <<C, Rest/bits>>),
 	{binary_to_integer(Num), R};
-callout_marker(<<">", Rest/bits>>) ->
+callout_prefix(<<">", Rest/bits>>) ->
 	{auto, Rest}.
 
 is_digit(C) ->
@@ -621,6 +629,10 @@ callout_list_test() ->
 	] = parse(<<"<1> First.\n<2> Second.">>),
 	%% Must be hard against the left margin.
 	?NOT(callout, parse(<<" <1> Indented.">>)),
+	%% Whitespace and item text are required.
+	?NOT(callout, parse(<<"<1>NoSpace">>)),
+	?NOT(callout, parse(<<"3>2 is false">>)),
+	?NOT(callout, parse(<<">=">>)),
 	ok.
 -endif.
 
@@ -1327,12 +1339,77 @@ para(St) ->
 fold_para(eof) ->
 	done;
 fold_para(Line) ->
+	case ends_paragraph(Line) of
+		true -> done;
+		false -> {more, Line}
+	end.
+
+%% Asciidoc User Guide 15.1: blank line, end of file, delimited
+%% block, or list. An attribute list does too, so [NOTE] can
+%% follow the previous paragraph. Comment lines already did.
+ends_paragraph(Line) ->
 	case trim(Line) of
-		<<>> -> done;
-		<<"+">> -> done;
-		<<"//", _/bits>> -> done;
-		%% @todo Detect delimited block or list.
-		_ -> {more, Line}
+		<<>> -> true;
+		<<"+">> -> true;
+		<<"//", _/bits>> -> true;
+		_ ->
+			attribute_list_line(Line)
+				orelse delimited_line(Line)
+				orelse list_line(Line)
+	end.
+
+attribute_list_line(<<$[, Rest/bits>>) ->
+	case trim(Rest) of
+		<<>> -> false;
+		Trimmed -> binary:last(Trimmed) =:= $]
+	end;
+attribute_list_line(_) ->
+	false.
+
+delimited_line(Line0) ->
+	Line = trim(Line0, trailing),
+	case Line of
+		<<"--">> ->
+			true;
+		<<$|, $=, $=, $=, Rest/bits>> ->
+			same_char(Rest, $=);
+		<<C, C, C, C, Rest/bits>> when C =:= $-; C =:= $.; C =:= $*;
+				C =:= $/; C =:= $+; C =:= $_; C =:= $= ->
+			same_char(Rest, C);
+		_ ->
+			false
+	end.
+
+same_char(<<>>, _) ->
+	true;
+same_char(<<C, Rest/bits>>, C) ->
+	same_char(Rest, C);
+same_char(<<_, _/bits>>, _) ->
+	false.
+
+list_line(Line0) ->
+	Line = trim(Line0),
+	case Line of
+		<<"-", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"*", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"**", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"***", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"****", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"*****", C, _/bits>> when ?IS_WS(C) -> true;
+		<<".", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"..", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"...", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"....", C, _/bits>> when ?IS_WS(C) -> true;
+		<<".....", C, _/bits>> when ?IS_WS(C) -> true;
+		_ ->
+			labeled_line(Line) orelse is_callout_line(Line0)
+	end.
+
+labeled_line(Line) ->
+	try find_labeled_list(Line) of
+		{Label, _, _} -> trim(Label) =/= <<>>
+	catch _:_ ->
+		false
 	end.
 
 -ifdef(TEST).

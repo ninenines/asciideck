@@ -263,6 +263,122 @@ paragraph(_) ->
 		"This is another paragraph.\n"),
 	ok.
 
+paragraph_ends(_) ->
+	doc("A paragraph ends at a delimiter, a table, a list, or an attribute list. (15.1)"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{listing_block, _, <<"code">>, _}
+	] = parse(
+		"Hello\n"
+		"----\n"
+		"code\n"
+		"----\n"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{example_block, _, <<"code">>, _}
+	] = parse(
+		"Hello\n"
+		"====\n"
+		"code\n"
+		"====\n"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{open_block, _, [
+			{paragraph, _, <<"Inside">>, _}
+		], _}
+	] = parse(
+		"Hello\n"
+		"--\n"
+		"Inside\n"
+		"--\n"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{table, _, [
+			{row, _, [
+				{cell, _, [{paragraph, _, <<"A">>, _}], _},
+				{cell, _, [{paragraph, _, <<"B">>, _}], _}
+			], _}
+		], _}
+	] = parse(
+		"Hello\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{admonition, #{style := <<"NOTE">>}, <<"Watch out.">>, _}
+	] = parse(
+		"Hello\n"
+		"[NOTE]\n"
+		"Watch out.\n"),
+	[
+		{admonition, #{style := <<"NOTE">>}, <<"Before.">>, _},
+		{listing_block, _, <<"code">>, _}
+	] = parse(
+		"NOTE: Before.\n"
+		"----\n"
+		"code\n"
+		"----\n"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{list, #{type := bulleted}, [
+			{list_item, _, [{paragraph, _, <<"One">>, _}], _}
+		], _}
+	] = parse(
+		"Hello\n"
+		"* One\n"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{list, #{type := numbered}, [
+			{list_item, _, [{paragraph, _, <<"Two">>, _}], _}
+		], _}
+	] = parse(
+		"Hello\n"
+		". Two\n"),
+	%% Three dashes are not a delimiter, and an unclosed bracket is not an attribute list.
+	[{paragraph, _, <<"Hello --- still [not closed still.">>, _}] = parse(
+		"Hello\n"
+		"--- still\n"
+		"[not closed\n"
+		"still.\n"),
+	%% An empty label is not a labeled list.
+	[{paragraph, _, <<"Hello :: nope still.">>, _}] = parse(
+		"Hello\n"
+		":: nope\n"
+		"still.\n"),
+	[{paragraph, _, <<"Hello ;; nope still.">>, _}] = parse(
+		"Hello\n"
+		";; nope\n"
+		"still.\n"),
+	[{paragraph, _, <<"Hello ::: nope still.">>, _}] = parse(
+		"Hello\n"
+		"::: nope\n"
+		"still.\n"),
+	%% A real labeled list does end the paragraph.
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{list, #{type := labeled}, [
+			{list_item, _, [{paragraph, _, <<"Answer">>, _}], _}
+		], _}
+	] = parse(
+		"Hello\n"
+		"Question:: Answer\n"),
+	%% A callout needs whitespace and item text.
+	[{paragraph, _, <<"Check 3>2 is false here.">>, _}] = parse(
+		"Check\n"
+		"3>2 is false\n"
+		"here.\n"),
+	[{paragraph, _, <<"<1>Note">>, _}] = parse("<1>Note\n"),
+	[
+		{paragraph, _, <<"Hello">>, _},
+		{list, #{type := callout}, [
+			{list_item, #{number := 1}, [{paragraph, _, <<"Note">>, _}], _}
+		], _}
+	] = parse(
+		"Hello\n"
+		"<1> Note\n"),
+	ok.
+
 paragraph_title(_) ->
 	doc("Paragraph preceded by a block title. (12, 15.1)"),
 	[{paragraph, #{<<"title">> := <<"Block title!">>}, <<"Hello world this is a paragraph peace.">>, _}] = parse(
