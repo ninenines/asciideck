@@ -81,9 +81,9 @@ inline(Data, BinAcc, Acc, Mark) ->
 		fun(Bin, _) -> constrained_mono(Bin, Mark) end,
 		fun superscript/2,
 		fun subscript/2,
-		fun emphasized_single_quote/2,
-		fun emphasized_underline/2,
-		fun strong/2,
+		fun(Bin, _) -> emphasized_single_quote(Bin, Mark) end,
+		fun(Bin, _) -> emphasized_underline(Bin, Mark) end,
+		fun(Bin, _) -> strong(Bin, Mark) end,
 		%% Passthrough macros.
 		fun inline_literal_passthrough/2,
 		%% Line breaks.
@@ -114,19 +114,31 @@ oneof(Data, BinAcc, Acc, Mark, [Parse|Tail]) ->
 			inline(Rest, <<>>, [Inline|Acc], prev_after(Inline));
 		{ok, Inline, Rest} ->
 			inline(Rest, <<>>, [Inline, BinAcc|Acc], prev_after(Inline));
+		%% The backslash before a matched quote is removed.
+		%% The opener is ordinary text and the rest is parsed again.
+		%% The same mark following that opener must not open.
+		{literal, Text, Rest} ->
+			inline(Rest, unescaped(BinAcc, Text), Acc,
+				quote_resume(Rest, binary:last(Text)));
 		{skip, Text, Rest} ->
 			oneof(Rest, <<BinAcc/binary, Text/binary>>, Acc, Mark, Tail)
 	catch _:_ ->
 		oneof(Data, BinAcc, Acc, Mark, Tail)
 	end.
 
-%% A "+" closer is consumed, so it is not a boundary for
-%% the next character. Other quote closers stay visible
-%% because "+" is paired before those quotes.
+%% The closer stays visible to the next quote. A constrained
+%% quote that ends on the first of a doubled mark returns
+%% 'consumed' itself, via quote_resume/2.
 prev_after({_, #{right := C}, _, _}) when is_integer(C) ->
 	C;
 prev_after(_) ->
 	start.
+
+%% Drop the backslash that suppressed this quote.
+unescaped(BinAcc, Text) ->
+	Size = byte_size(BinAcc) - 1,
+	<<Keep:Size/binary, $\\>> = BinAcc,
+	<<Keep/binary, Text/binary>>.
 
 -ifdef(TEST).
 text_test() ->
@@ -363,23 +375,29 @@ constrained_mono(<<$+, Rest/bits>>, Mark) ->
 			Doubled = quote_spans(Rest, $+, 0, Passes),
 			{Content, Tail} = plus_content(Rest,
 				lists:sort(Doubled ++ Passes), 0),
-			{ok, {monospaced, #{
-				left => $+,
-				right => $+
-			}, inline(Content, $+), inline}, Tail, plus_resume(Tail)}
+			case Mark of
+				$\\ ->
+					{literal, <<$+>>, Rest};
+				_ ->
+					{ok, {monospaced, #{
+						left => $+,
+						right => $+
+					}, inline(Content, $+), inline}, Tail,
+						quote_resume(Tail, $+)}
+			end
 	end.
 
-%% Closing on the first "+" of "++" must not let the
-%% second "+" open a new quote. "++x+++code+" still does,
-%% because that "+" follows a finished "++" pair.
-plus_resume(<<$+, _/bits>>) ->
+%% Closing on the first mark of a doubled pair must not
+%% let the second mark open a new quote. A "+" after a
+%% finished "++" pair still opens.
+quote_resume(<<C, _/bits>>, C) ->
 	consumed;
-plus_resume(_) ->
-	$+.
+quote_resume(_, C) ->
+	C.
 
-%% ^ is only the real start of the text. A consumed "+"
-%% closer is not a boundary. ";" ":" "}" and word
-%% characters, including "_", are not either.
+%% ^ is only the real start of the text. A consumed closer
+%% is not a boundary. ";" ":" "}" and word characters,
+%% including "_", are not either.
 plus_left(start) ->
 	true;
 plus_left(consumed) ->
@@ -467,8 +485,9 @@ quote_spans(Bin, C, From, Skip) ->
 	end.
 
 %% The closer is the first doubled mark that leaves at least
-%% one byte of content. An adjacent mark is content:
-%% "*****" is strong of a single "*". "****" is not a quote.
+%% one byte of content. "*****" is strong of a single "*".
+%% "****" has nothing between the pairs, so it is not an
+%% unconstrained quote. The constrained form may still match.
 find_closer(Bin, C, Open, Skip) ->
 	find_closer(Bin, C, Open, Open + 2, Skip).
 
@@ -610,32 +629,63 @@ single_closer(Bin, C, From, Skip) ->
 	end.
 
 %% Asciidoc User Guide 10.1
-%% @todo <<"\\*"
-emphasized_single_quote(Data, Prev) ->
-	quoted_text(Data, Prev, emphasized, $', $').
-emphasized_underline(Data, Prev) ->
-	quoted_text(Data, Prev, emphasized, $_, $_).
-strong(Data, Prev) ->
-	quoted_text(Data, Prev, strong, $*, $*).
+emphasized_single_quote(Data, Mark) ->
+	quoted_text(Data, Mark, emphasized, $', $').
+emphasized_underline(Data, Mark) ->
+	quoted_text(Data, Mark, emphasized, $_, $_).
+strong(Data, Mark) ->
+	quoted_text(Data, Mark, strong, $*, $*).
 
-quoted_text(<<Left, Rest0/bits>>, Prev, Type, Left, Right) when ?IS_BOUNDARY(Prev) ->
-	{Content, Rest} = constrained_content(Rest0, Left),
-	%% "**" is not strong. The content has to be non-empty.
-	true = Content =/= <<>>,
-	{ok, {Type, #{
-		left => Left,
-		right => Right
-	}, inline(Content, Left), inline}, Rest}.
+quoted_text(<<Left, Rest0/bits>>, Mark, Type, Left, Right) ->
+	case plus_left(Mark) of
+		false ->
+			error(nomatch);
+		true ->
+			{Content, Rest} = constrained_content(Rest0, Left),
+			%% The content has to be non-empty.
+			true = Content =/= <<>>,
+			case Mark of
+				$\\ ->
+					{literal, <<Left>>, Rest0};
+				_ ->
+					{ok, {Type, #{
+						left => Left,
+						right => Right
+					}, inline(Content, Left), inline}, Rest,
+						quote_resume(Rest, Right)}
+			end
+	end.
 
 %% * and _ have a doubled form. Skip those spans when
 %% looking for the closing mark. +++text+++ is not text
 %% for any quote, so those spans are skipped too.
+%% The closer must be followed by a non-word character,
+%% and the content cannot start or end with whitespace.
 constrained_content(Bin, C) when C =:= $*; C =:= $_ ->
 	Passes = plus_passthroughs(Bin),
 	Doubled = quote_spans(Bin, C, 0, Passes),
-	take_constrained(Bin, C, lists:sort(Doubled ++ Passes), 0);
+	take_bounded(Bin, C, lists:sort(Doubled ++ Passes));
 constrained_content(Bin, C) ->
-	take_constrained(Bin, C, plus_passthroughs(Bin), 0).
+	take_bounded(Bin, C, plus_passthroughs(Bin)).
+
+take_bounded(<<C, _/bits>>, _, _) when C =:= $\s; C =:= $\t; C =:= $\n; C =:= $\r ->
+	error(nomatch);
+take_bounded(Bin, C, Spans) ->
+	take_bounded(Bin, C, Spans, 0).
+
+take_bounded(Bin, _, _, Pos) when Pos >= byte_size(Bin) ->
+	error(nomatch);
+take_bounded(Bin, C, Spans, Pos) ->
+	case binary:at(Bin, Pos) =:= C andalso not in_span(Pos, Spans)
+			andalso Pos > 0
+			andalso not plus_space(binary:at(Bin, Pos - 1))
+			andalso plus_right_boundary(Bin, Pos + 1) of
+		true ->
+			<<Content:Pos/binary, _:1/binary, Rest/bits>> = Bin,
+			{Content, Rest};
+		false ->
+			take_bounded(Bin, C, Spans, Pos + 1)
+	end.
 
 take_constrained(Bin, _, _, Pos) when Pos >= byte_size(Bin) ->
 	error(nomatch);
@@ -671,6 +721,14 @@ emphasized_test() ->
 		"Word phrases 'enclosed in single quote characters' (acute accents) "
 		"or _underline characters_ are emphasized."
 	>>),
+	<<"'word'next">> = inline(<<"'word'next">>),
+	[{emphasized, _, <<"word">>, _}, <<" next">>]
+		= inline(<<"'word' next">>),
+	<<"See ' not ' here.">> = inline(<<"See ' not ' here.">>),
+	[{emphasized, _, <<"em">>, _}, <<" next">>]
+		= inline(<<"_em_ next">>),
+	[{emphasized, _, <<"'text">>, _}, <<"'">>]
+		= inline(<<"''text''">>),
 	ok.
 
 strong_test() ->
@@ -684,7 +742,69 @@ strong_test() ->
 		"are rendered in a strong font (usually bold)."
 	>>),
 	<<"** Two.">> = inline(<<"** Two.">>),
-	<<"*** Three.">> = inline(<<"*** Three.">>),
+	%% "***" is a strong of one "*", not an empty quote.
+	[{strong, _, <<"*">>, _}, <<" Three.">>]
+		= inline(<<"*** Three.">>),
+	<<"*bold*word">> = inline(<<"*bold*word">>),
+	[{strong, _, <<"bold">>, _}, <<" word">>]
+		= inline(<<"*bold* word">>),
+	[{strong, _, <<"bold*word">>, _}] = inline(<<"*bold*word*">>),
+	[{strong, _, <<"bold">>, _}, <<"*more*">>]
+		= inline(<<"*bold**more*">>),
+	<<"See * not * here.">> = inline(<<"See * not * here.">>),
+	[<<"end.">>, {strong, _, <<"bold">>, _}]
+		= inline(<<"end.*bold*">>),
+	<<"2*bold*">> = inline(<<"2*bold*">>),
+	<<"_em_next">> = inline(<<"_em_next">>),
+	[{strong, _, <<"bold">>, _}, <<".">>] = inline(<<"*bold*.">>),
+	[{strong, _, <<"bold*more">>, _}] = inline(<<"*bold*more*">>),
+	[{strong, _, <<"bold">>, _}, <<" ">>, {strong, _, <<"more">>, _}]
+		= inline(<<"*bold* *more*">>),
+	[{strong, _, <<"foo bar">>, _}] = inline(<<"*foo\nbar*">>),
+	<<"*bold*é"/utf8>> = inline(<<"*bold*é"/utf8>>),
+	<<"é*bold*"/utf8>> = inline(<<"é*bold*"/utf8>>),
+	ok.
+
+%% A backslash before a quote that matches suppresses it
+%% and is removed. The text inside is still parsed. A
+%% backslash before a mark that does not match stays.
+quote_escape_test() ->
+	<<"*bold*">> = inline(<<"\\*bold*">>),
+	<<"_em_">> = inline(<<"\\_em_">>),
+	<<"'em'">> = inline(<<"\\'em'">>),
+	<<"pre*bold*">> = inline(<<"pre\\*bold*">>),
+	<<"a\\*b">> = inline(<<"a\\*b">>),
+	<<"\\*bold*">> = inline(<<"\\\\*bold*">>),
+	<<"+code+">> = inline(<<"\\+code+">>),
+	<<"see +code+ here">> = inline(<<"see \\+code+ here">>),
+	[
+		<<"*bold ">>,
+		{emphasized, _, <<"em">>, _},
+		<<" more*">>
+	] = inline(<<"\\*bold _em_ more*">>),
+	[
+		<<"*bold* ">>,
+		{strong, _, <<"more">>, _}
+	] = inline(<<"\\*bold* *more*">>),
+	[
+		<<"*a ">>,
+		{strong, _, <<"b">>, _},
+		<<" c*">>
+	] = inline(<<"\\*a **b** c*">>),
+	[
+		<<"\\+code ">>,
+		{emphasized, _, <<"em">>, _},
+		<<" + here">>
+	] = inline(<<"\\+code _em_ + here">>),
+	<<"****">> = inline(<<"\\****">>),
+	<<"a****">> = inline(<<"a\\****">>),
+	<<"pre****">> = inline(<<"pre\\****">>),
+	<<"\\****">> = inline(<<"\\\\****">>),
+	<<"**a*">> = inline(<<"\\**a*">>),
+	<<"''a'">> = inline(<<"\\''a'">>),
+	[{emphasized, _, <<"a">>, _}, <<"''b'">>]
+		= inline(<<"'a'\\''b'">>),
+	<<"++++">> = inline(<<"\\++++">>),
 	ok.
 
 %% A closer on the next line ends the quote. The newline
@@ -746,8 +866,12 @@ unconstrained_test() ->
 		<<" c">>
 	], _}] = inline(<<"*a **b** c*">>),
 	<<"**">> = inline(<<"**">>),
-	<<"****">> = inline(<<"****">>),
+	%% Nothing sits between the pairs, so this is not
+	%% unconstrained. Constrained quotes take one mark.
+	[{strong, _, <<"*">>, _}, <<"*">>] = inline(<<"****">>),
 	<<"__">> = inline(<<"__">>),
+	%% "_" is a word character, so the closer is the last one.
+	[{emphasized, _, <<"__">>, _}] = inline(<<"____">>),
 	%% An unclosed doubled mark must not drop earlier quotes,
 	%% and must not pair with the closer of a finished quote.
 	[{strong, _, <<"bold">>, _}, <<" and then **">>]

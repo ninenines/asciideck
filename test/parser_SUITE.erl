@@ -807,13 +807,22 @@ titled_plus_paragraph(_) ->
 		"+\n"
 		"1> callout text\n",
 		<<"+ 1> callout text">>),
-	titled_plus(
+	%% "***" is a strong quote of one "*", not a nested list.
+	[
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One.">>, _}], _}
+		], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, [
+			<<"+ ">>,
+			{strong, _, <<"*">>, _},
+			<<" Three.">>
+		], _}
+	] = parse(
 		"* One.\n"
 		"\n"
 		".Title\n"
 		"+\n"
-		"*** Three.\n",
-		<<"+ *** Three.">>),
+		"*** Three.\n"),
 	%% A comment is skipped. The lines around it stay one paragraph.
 	titled_plus(
 		"* One.\n"
