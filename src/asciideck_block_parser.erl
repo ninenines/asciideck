@@ -26,6 +26,7 @@
 -module(asciideck_block_parser).
 
 -export([parse/1]).
+-export([parse/2]).
 
 %% @todo Temporary export. Move somewhere else.
 -export([trim/1]).
@@ -35,7 +36,11 @@
 -type ast() :: list(). %% @todo
 
 -record(state, {
-	reader :: pid()
+	reader :: pid(),
+	%% Line number of the line before this reader's first line.
+	%% Zero for a whole document. An open block passes the
+	%% opener line so children keep the file line number.
+	line_offset = 0 :: non_neg_integer()
 }).
 
 -define(IS_WS(C), (C =:= $\s) or (C =:= $\t)).
@@ -53,14 +58,25 @@ define_NOT_test() ->
 
 -spec parse(binary() | pid()) -> ast().
 parse(Data) when is_binary(Data) ->
-	%% @todo Might want to start it supervised.
-	%% @todo Might want to stop it also.
-	{ok, ReaderPid} = asciideck_line_reader:start_link(Data),
-	parse(ReaderPid);
+	parse(Data, 0);
 parse(Data) when is_list(Data) ->
 	parse(iolist_to_binary(Data));
 parse(ReaderPid) when is_pid(ReaderPid) ->
 	blocks(#state{reader=ReaderPid}).
+
+%% Offset is the file line of the line before Data's first line.
+-spec parse(binary(), non_neg_integer()) -> ast().
+parse(Data, Offset) when is_binary(Data), is_integer(Offset), Offset >= 0 ->
+	%% @todo Might want to start it supervised.
+	{ok, ReaderPid} = asciideck_line_reader:start_link(Data),
+	try blocks(#state{reader=ReaderPid, line_offset=Offset})
+	after
+		%% Stay linked while parsing so a caller crash kills the
+		%% reader. Unlink before stopping so a trap_exit caller
+		%% does not see the normal shutdown.
+		unlink(ReaderPid),
+		gen_server:stop(ReaderPid)
+	end.
 
 blocks(St) ->
 	case block(St) of
@@ -931,7 +947,14 @@ delimited_block(St, Name, Char, Attrs, Four) ->
 	Line = trim(Line0, trailing),
 	repeats(Line, Char),
 	%% Get the content of the block as-is.
-	Block = read_while(St, fun(L) -> fold_delimited_block(L, Four, Char) end, <<>>),
+	%% A table body must keep leading empty lines so cell line
+	%% numbers still count them. Other blocks drop those lines
+	%% from their text, as they always have.
+	Keep = case Name of
+		table -> keep;
+		_ -> drop
+	end,
+	Block = read_while(St, fun(L) -> fold_delimited_block(L, Four, Char) end, <<>>, Keep),
 	%% Skip the trailing delimiter line.
 	_ = read_line(St),
 	{Name, Attrs, Block, Ann}.
@@ -968,6 +991,12 @@ delimited_block_test() ->
 	[{listing_block, _, <<"Hello!\n">>, _}] = parse(<<
 		"----\n"
 		"Hello!">>),
+	%% A leading empty line is not part of the listing text.
+	[{listing_block, _, <<"Hi">>, _}] = parse(<<
+		"----\n"
+		"\n"
+		"Hi\n"
+		"----\n">>),
 	ok.
 -endif.
 
@@ -979,12 +1008,15 @@ delimited_block_test() ->
 open_block(St) ->
 	<<"--">> = trim(read_line(St), trailing),
 	Ann = ann(St),
-	Block = read_while(St, fun fold_open_block/1, <<>>),
+	%% Keep a leading empty line in the slice. The nested parse
+	%% skips it, and the line offset then matches the file.
+	Block = read_while(St, fun fold_open_block/1, <<>>, keep),
 	%% Skip the closing delimiter when present.
 	_ = read_line(St),
+	%% The slice starts on the line after the opener.
 	Children = case Block of
 		<<>> -> [];
-		_ -> parse(Block)
+		_ -> parse(Block, maps:get(line, Ann))
 	end,
 	{open_block, #{}, Children, Ann}.
 
@@ -1029,6 +1061,50 @@ open_block_test() ->
 	?NOT(open_block, parse(<<"---\nHello!\n---\n">>)),
 	?NOT(open_block, parse(<<"  --\nHello!\n  --\n">>)),
 	ok.
+
+%% Parsing a binary must not leave the line reader running.
+open_block_reader_test() ->
+	Before = line_readers(),
+	_ = parse(<<"--\nHello!\n\n----\nHi\n----\n--\n">>),
+	Started = [Pid || Pid <- line_readers(), not lists:member(Pid, Before)],
+	[] = Started,
+	ok.
+
+%% The caller owns a reader pid (stdin). Parsing must not stop it.
+reader_pid_kept_test() ->
+	{ok, Pid} = asciideck_line_reader:start_link(<<"Hello\n">>),
+	[{paragraph, _, <<"Hello">>, _}] = parse(Pid),
+	true = is_process_alive(Pid),
+	gen_server:stop(Pid),
+	ok.
+
+%% Stopping a reader must not deliver an exit to the caller.
+reader_stop_silent_test() ->
+	process_flag(trap_exit, true),
+	_ = asciideck:parse(<<
+		"--\n"
+		"\n"
+		"Hello\n"
+		"--\n"
+		"\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"
+	>>),
+	receive
+		{'EXIT', _, Reason} -> error({reader_exit, Reason})
+	after 0 -> ok
+	end.
+
+line_readers() ->
+	[Pid || Pid <- processes(),
+		case process_info(Pid, dictionary) of
+			{dictionary, Dict} ->
+				proplists:get_value('$initial_call', Dict)
+					=:= {asciideck_line_reader, init, 1};
+			_ ->
+				false
+		end].
 -endif.
 
 %% Asciidoc User Guide 23
@@ -1392,21 +1468,55 @@ skip(Parse, St=#state{reader=ReaderPid}) ->
 read_line(#state{reader=ReaderPid}) ->
 	asciideck_reader:read_line(ReaderPid).
 
-read_while(St=#state{reader=ReaderPid}, F, Acc) ->
+read_while(St, F, Acc) ->
+	read_while(St, F, Acc, drop).
+
+read_while(St, F, Acc, Keep) ->
+	do_read_while(St, F, start_acc(Acc), Keep).
+
+do_read_while(St=#state{reader=ReaderPid}, F, Acc, Keep) ->
 	Ln = asciideck_reader:get_position(ReaderPid),
 	case F(read_line(St)) of
 		done ->
 			asciideck_reader:set_position(ReaderPid, Ln),
-			Acc;
+			finish_lines(Acc);
 		{more, Line} ->
-			case Acc of
-				<<>> -> read_while(St, F, Line);
-				_ -> read_while(St, F, <<Acc/binary, $\n, Line/binary>>)
-			end
+			do_read_while(St, F, append_line(Acc, Line, Keep), Keep)
 	end.
 
-ann(#state{reader=ReaderPid}) ->
-	#{line => asciideck_reader:get_position(ReaderPid)}.
+%% <<>> means both "nothing read" and "an empty line", so the
+%% accumulator uses none until the first line is kept. drop still
+%% throws away leading empty lines. keep remembers them and emits
+%% one leading newline per empty line once real text follows.
+start_acc(<<>>) ->
+	none;
+start_acc(Acc) ->
+	Acc.
+
+append_line(none, <<>>, drop) ->
+	none;
+append_line(none, <<>>, keep) ->
+	{pending, 1};
+append_line(none, Line, _) ->
+	Line;
+append_line({pending, N}, <<>>, keep) ->
+	{pending, N + 1};
+append_line({pending, N}, Line, _) ->
+	<<(binary:copy(<<$\n>>, N))/binary, Line/binary>>;
+append_line(Acc, Line, _) when is_binary(Acc) ->
+	<<Acc/binary, $\n, Line/binary>>.
+
+finish_lines(none) ->
+	<<>>;
+finish_lines({pending, _}) ->
+	<<>>;
+finish_lines(Bin) when is_binary(Bin) ->
+	Bin.
+
+%% The reader position is the next line to be read.
+%% line_offset shifts a nested slice back onto the file line.
+ann(#state{reader=ReaderPid, line_offset=Offset}) ->
+	#{line => asciideck_reader:get_position(ReaderPid) - 1 + Offset}.
 
 trim(Line) ->
 	trim(Line, both).

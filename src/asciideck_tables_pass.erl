@@ -34,7 +34,9 @@ run([Block|Tail]) ->
 	[Block|run(Tail)].
 
 table({table, Attrs, Contents, Ann}) ->
-	{Cells, NumCols} = parse_table(Contents, Attrs),
+	%% The body starts on the line after the opening delimiter.
+	Line = maps:get(line, Ann, 0) + 1,
+	{Cells, NumCols} = parse_table(Contents, Attrs, Line),
 	Children = rows(Cells, NumCols),
 	{table, Attrs, Children, Ann}.
 
@@ -65,21 +67,26 @@ table_test() ->
 
 %% If the cols attribute is not specified, the number of
 %% columns is the number of cells on the first line.
-parse_table(Contents, #{<<"cols">> := Cols}) ->
-	{parse_cells(Contents, []), num_cols(Cols)};
+%% Leading empty lines were kept in the body so they count. They are
+%% not a row, and must not set the column count.
+parse_table(<<$\n, Rest/bits>>, Attrs, Line) ->
+	parse_table(Rest, Attrs, Line + 1);
+parse_table(Contents, #{<<"cols">> := Cols}, Line) ->
+	{parse_cells(Contents, [], Line), num_cols(Cols)};
 %% We get the first line, parse the cells in it then
 %% count the number of columns in the table. Finally
 %% we parse all the remaining cells.
-parse_table(Contents, _) ->
+parse_table(Contents, _, Line) ->
 	case binary:split(Contents, <<$\n>>) of
 		%% We only have the one line. Who writes tables like this?
-		[Line] ->
-			Cells = parse_cells(Line, []),
+		[Row] ->
+			Cells = parse_cells(Row, [], Line),
 			{Cells, length(Cells)};
 		%% We have a useful table with more than one line. Good user!
-		[Line, Rest] ->
-			Cells0 = parse_cells(Line, []),
-			Cells = parse_cells(Rest, lists:reverse(Cells0)),
+		%% The split drops the newline, so the rest starts one line down.
+		[Row, Rest] ->
+			Cells0 = parse_cells(Row, [], Line),
+			Cells = parse_cells(Rest, lists:reverse(Cells0), Line + 1),
 			{Cells, length(Cells0)}
 	end.
 
@@ -217,9 +224,9 @@ parse_specs_test_() ->
 	[{V, fun() -> R = parse_specs(V) end} || {V, R} <- Tests].
 -endif.
 
-parse_cells(Contents, Acc) ->
+parse_cells(Contents, Acc, Line) ->
 	Cells = split_cells(Contents),%binary:split(Contents, [<<$|>>], [global]),
-	do_parse_cells(Cells, Acc).
+	do_parse_cells(Cells, Acc, Line).
 	%% Split on |
 	%% Look at the end of each element see if there's a cell specifier
 	%% Add it as an attribute to the cell for now and consolidate
@@ -238,26 +245,42 @@ split_cells(<<C, R/bits>>, Cell, Acc) ->
 	split_cells(R, <<Cell/binary, C>>, Acc).
 
 %% Malformed table (no pipe before cell). Process it like it is a single cell.
-do_parse_cells([Contents], Acc) ->
+do_parse_cells([Contents], Acc, _Line) ->
 	%% @todo Annotations.
 	lists:reverse([{cell, #{specifiers => <<>>}, Contents, #{}}|Acc]);
 %% Last cell. There are no further cell specifiers.
-do_parse_cells([Specs, Contents0], Acc) ->
-	Contents = asciideck_block_parser:parse(Contents0),
+do_parse_cells([Specs, Contents0], Acc, Line) ->
+	Contents = parse_cell(Contents0, Line + newlines(Specs)),
 	%% @todo Annotations.
 	Cell = {cell, #{specifiers => Specs}, Contents, #{}},
 	lists:reverse([Cell|Acc]);
 %% If there are cell specifiers we need to extract them from the cell
 %% contents. Cell specifiers are everything from the last whitespace
 %% until the end of the binary.
-do_parse_cells([Specs, Contents0|Tail], Acc) ->
+do_parse_cells([Specs, Contents0|Tail], Acc, Line) ->
 	NextSpecs = <<>>, %% @todo find_r(Contents0, <<>>),
 	Len = byte_size(Contents0) - byte_size(NextSpecs),
 	<<Contents1:Len/binary, _/bits>> = Contents0,
-	Contents = asciideck_block_parser:parse(Contents1),
+	CellLine = Line + newlines(Specs),
+	Contents = parse_cell(Contents1, CellLine),
 	%% @todo Annotations.
 	Cell = {cell, #{specifiers => Specs}, Contents, #{}},
-	do_parse_cells([NextSpecs|Tail], [Cell|Acc]).
+	%% NextSpecs is empty, so the following cell continues from
+	%% the line after this cell's own newlines.
+	do_parse_cells([NextSpecs|Tail], [Cell|Acc], CellLine + newlines(Contents1)).
+
+parse_cell(Contents, Line) ->
+	asciideck_block_parser:parse(Contents, Line - 1).
+
+newlines(Bin) ->
+	newlines(Bin, 0).
+
+newlines(<<$\n, Rest/bits>>, N) ->
+	newlines(Rest, N + 1);
+newlines(<<_, Rest/bits>>, N) ->
+	newlines(Rest, N);
+newlines(<<>>, N) ->
+	N.
 
 %% @todo This is not correct. Not all remaining data is specifiers.
 %% In addition, for columns at the end of the line this doesn't apply.
@@ -284,7 +307,7 @@ parse_table_test() ->
 	], 3} = parse_table(<<
 		"|1 |2 |A\n"
 		"|3 |4 |B\n"
-		"|5 |6 |C">>, #{}),
+		"|5 |6 |C">>, #{}, 1),
 	ok.
 
 parse_table_escape_pipe_test() ->
@@ -295,7 +318,7 @@ parse_table_escape_pipe_test() ->
 		{cell, _, [{paragraph, _, <<"5">>, _}], _}
 	], 2} = parse_table(<<
 		"|1 |2\n"
-		"|3 \\|4 |5">>, #{}),
+		"|3 \\|4 |5">>, #{}, 1),
 	ok.
 -endif.
 

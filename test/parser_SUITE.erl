@@ -42,6 +42,34 @@ empty_line_spaces(_) ->
 	[] = parse(" \n  \n   \n    \n     \n"),
 	ok.
 
+block_line(_) ->
+	doc("A block is annotated with its own line, not the next one."),
+	[
+		{section_title, _, <<"Title">>, #{line := 1}},
+		{paragraph, _, <<"Paragraph continued.">>, #{line := 3}},
+		{listing_block, #{<<"title">> := <<"Listing">>}, <<"Hello!">>, #{line := 7}},
+		{list, _, [
+			{list_item, _, [{paragraph, _, <<"One">>, _}], #{line := 11}},
+			{list_item, _, [{paragraph, _, <<"Two">>, _}], #{line := 12}}
+		], #{line := 11}},
+		{comment_line, _, <<"Comment">>, #{line := 14}}
+	] = parse(
+		"= Title\n"
+		"\n"
+		"Paragraph\n"
+		"continued.\n"
+		"\n"
+		".Listing\n"
+		"----\n"
+		"Hello!\n"
+		"----\n"
+		"\n"
+		"* One\n"
+		"* Two\n"
+		"\n"
+		"// Comment\n"),
+	ok.
+
 %% Text formatting.
 
 quoted_text_strong(_) ->
@@ -436,6 +464,96 @@ open_block(_) ->
 		"--\n"),
 	ok.
 
+open_block_line(_) ->
+	doc("Open block children keep the file line, not a line in the slice."),
+	[
+		{paragraph, _, <<"line1">>, #{line := 1}},
+		{open_block, _, [
+			{paragraph, _, <<"Hello!">>, #{line := 4}},
+			{paragraph, _, <<"World!">>, #{line := 6}}
+		], #{line := 3}}
+	] = parse(
+		"line1\n"
+		"\n"
+		"--\n"
+		"Hello!\n"
+		"\n"
+		"World!\n"
+		"--\n"),
+	[
+		{open_block, _, [
+			{paragraph, _, <<"Hello!">>, #{line := 2}},
+			{listing_block, _, <<"Hi">>, #{line := 4}}
+		], #{line := 1}}
+	] = parse(
+		"--\n"
+		"Hello!\n"
+		"\n"
+		"----\n"
+		"Hi\n"
+		"----\n"
+		"--\n"),
+	%% A table inside the open block keeps both offsets.
+	[
+		{open_block, _, [
+			{table, _, [
+				{row, _, [
+					{cell, _, [{paragraph, _, <<"A">>, #{line := 3}}], _},
+					{cell, _, [{paragraph, _, <<"B">>, #{line := 3}}], _}
+				], _}
+			], #{line := 2}}
+		], #{line := 1}}
+	] = parse(
+		"--\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"
+		"--\n"),
+	%% A leading empty line is skipped, and the next block keeps its file line.
+	[{open_block, _, [
+		{paragraph, _, <<"Hello">>, #{line := 3}}
+	], #{line := 1}}] = parse(
+		"--\n"
+		"\n"
+		"Hello\n"
+		"--\n"),
+	[{open_block, _, [
+		{paragraph, _, <<"Hello">>, #{line := 4}},
+		{paragraph, _, <<"World">>, #{line := 6}}
+	], #{line := 1}}] = parse(
+		"--\n"
+		"\n"
+		"\n"
+		"Hello\n"
+		"\n"
+		"World\n"
+		"--\n"),
+	%% A whitespace line was already kept. It must stay on its own line.
+	[{open_block, _, [
+		{paragraph, _, <<"Hello">>, #{line := 3}}
+	], #{line := 1}}] = parse(
+		"--\n"
+		" \n"
+		"Hello\n"
+		"--\n"),
+	%% The open block offset and the table's own leading empty line both apply.
+	[{open_block, _, [
+		{table, _, [
+			{row, _, [
+				{cell, _, [{paragraph, _, <<"A">>, #{line := 5}}], _},
+				{cell, _, [{paragraph, _, <<"B">>, #{line := 5}}], _}
+			], _}
+		], #{line := 3}}
+	], #{line := 1}}] = parse(
+		"--\n"
+		"\n"
+		"|===\n"
+		"\n"
+		"|A |B\n"
+		"|===\n"
+		"--\n"),
+	ok.
+
 %% Listing blocks.
 
 listing(_) ->
@@ -707,6 +825,73 @@ table(_) ->
 		"|3 |4 |B\n"
 		"|5 |6 |C\n"
 		"|======="),
+	ok.
+
+table_cell_line(_) ->
+	doc("A table cell paragraph keeps the file line of its row."),
+	[{table, _, [
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"A">>, #{line := 2}}], _},
+			{cell, _, [{paragraph, _, <<"B">>, #{line := 2}}], _}
+		], _},
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"C">>, #{line := 3}}], _},
+			{cell, _, [{paragraph, _, <<"D">>, #{line := 3}}], _}
+		], _}
+	], #{line := 1}}] = parse(
+		"|===\n"
+		"|A |B\n"
+		"|C |D\n"
+		"|===\n"),
+	%% The row line follows the table, wherever the table sits.
+	[
+		{paragraph, _, <<"Before">>, #{line := 1}},
+		{table, _, [
+			{row, _, [
+				{cell, _, [{paragraph, _, <<"A">>, #{line := 4}}], _},
+				{cell, _, [{paragraph, _, <<"B">>, #{line := 4}}], _}
+			], _}
+		], #{line := 3}}
+	] = parse(
+		"Before\n"
+		"\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"),
+	%% A newline inside a cell moves the following cell down.
+	[{table, _, [
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"One two">>, #{line := 3}}], _},
+			{cell, _, [{paragraph, _, <<"Three">>, #{line := 4}}], _}
+		], _}
+	], #{line := 2}}] = parse(
+		"[cols=\"2\"]\n"
+		"|===\n"
+		"|One\n"
+		"two|Three\n"
+		"|===\n"),
+	%% A blank line under the delimiter is not a row.
+	[{table, _, [
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"A">>, #{line := 3}}], _},
+			{cell, _, [{paragraph, _, <<"B">>, #{line := 3}}], _}
+		], _}
+	], #{line := 1}}] = parse(
+		"|===\n"
+		"\n"
+		"|A |B\n"
+		"|===\n"),
+	[{table, _, [
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"A">>, #{line := 4}}], _},
+			{cell, _, [{paragraph, _, <<"B">>, #{line := 4}}], _}
+		], _}
+	], #{line := 2}}] = parse(
+		"[cols=\"2\"]\n"
+		"|===\n"
+		"\n"
+		"|A |B\n"
+		"|===\n"),
 	ok.
 
 %% @todo Check attributes also.
