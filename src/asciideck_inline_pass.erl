@@ -69,6 +69,9 @@ inline(Data, BinAcc, Acc) ->
 		%% and are tried before the constrained forms.
 		fun unconstrained_strong/2,
 		fun unconstrained_emphasis/2,
+		%% +++ is a passthrough and is taken before ++.
+		fun passthrough_plus/2,
+		fun unconstrained_mono/2,
 		fun superscript/2,
 		fun subscript/2,
 		fun emphasized_single_quote/2,
@@ -311,6 +314,16 @@ unconstrained_strong(Data, _) ->
 	unconstrained(Data, strong, $*).
 unconstrained_emphasis(Data, _) ->
 	unconstrained(Data, emphasized, $_).
+%% User Guide passthrough macros. +++text+++ is copied
+%% through with no substitutions. It is not a ++ quote.
+%% +++foo++ has no closing triple, so ++ may match it.
+passthrough_plus(<<"+++", Rest0/bits>>, _) ->
+	{Pos, _} = binary:match(Rest0, <<"+++">>),
+	<<Content:Pos/binary, _:3/binary, Rest/bits>> = Rest0,
+	{ok, {passthrough, #{}, Content, inline}, Rest}.
+
+unconstrained_mono(Data, _) ->
+	unconstrained(Data, monospaced, $+).
 
 unconstrained(<<C, C, _/bits>> = Data, Type, C) ->
 	[{0, End}|_] = quote_spans(Data, C),
@@ -325,49 +338,131 @@ unconstrained(<<C, C, _/bits>> = Data, Type, C) ->
 %% the single mark of the same character. A constrained
 %% quote therefore does not close on either half of "**"
 %% or "__". "2 * 3 = **six**." leaves the single * literal.
+%%
+%% +++text+++ is removed before any of those marks are
+%% paired. The pluses and the bytes inside are not marks.
 quote_spans(Bin, C) ->
-	quote_spans(Bin, C, 0).
+	quote_spans(Bin, C, 0, plus_passthroughs(Bin)).
 
-quote_spans(Bin, C, From) ->
-	case find_mark(Bin, C, From) of
+quote_spans(Bin, C, From, Skip) ->
+	case find_mark(Bin, C, From, Skip) of
 		nomatch ->
 			[];
 		Open ->
-			case find_closer(Bin, C, Open) of
+			case find_closer(Bin, C, Open, Skip) of
 				nomatch ->
-					quote_spans(Bin, C, Open + 1);
+					quote_spans(Bin, C, Open + 1, Skip);
 				Close ->
-					[{Open, Close + 2}|quote_spans(Bin, C, Close + 2)]
+					[{Open, Close + 2}|quote_spans(Bin, C, Close + 2, Skip)]
 			end
 	end.
 
 %% The closer is the first doubled mark that leaves at least
 %% one byte of content. An adjacent mark is content:
 %% "*****" is strong of a single "*". "****" is not a quote.
-find_closer(Bin, C, Open) ->
-	find_closer(Bin, C, Open, Open + 2).
+find_closer(Bin, C, Open, Skip) ->
+	find_closer(Bin, C, Open, Open + 2, Skip).
 
-find_closer(Bin, C, Open, From) ->
-	case find_mark(Bin, C, From) of
+find_closer(Bin, C, Open, From, Skip) ->
+	case find_mark(Bin, C, From, Skip) of
 		nomatch ->
 			nomatch;
 		Close when Close > Open + 2 ->
 			Close;
 		Close ->
-			find_closer(Bin, C, Open, Close + 1)
+			find_closer(Bin, C, Open, Close + 1, Skip)
 	end.
 
-find_mark(Bin, C, From) ->
+find_mark(Bin, C, From, Skip) ->
 	Size = byte_size(Bin),
 	case From > Size - 2 of
 		true ->
 			nomatch;
 		false ->
 			case binary:match(Bin, <<C, C>>, [{scope, {From, Size - From}}]) of
-				nomatch -> nomatch;
-				{Pos, 2} -> Pos
+				nomatch ->
+					nomatch;
+				{Pos, 2} ->
+					Inside = case in_span(Pos, Skip) of
+						true -> Pos;
+						false -> Pos + 1
+					end,
+					case in_span(Inside, Skip) of
+						true ->
+							find_mark(Bin, C, skip_end(Inside, Skip), Skip);
+						false ->
+							Pos
+					end
 			end
 	end.
+
+%% +++text+++ spans, including the delimiters. The first
+%% closer wins. A triple with no closer is not a span.
+plus_passthroughs(Bin) ->
+	plus_passthroughs(Bin, 0).
+
+plus_passthroughs(Bin, From) ->
+	Size = byte_size(Bin),
+	case From > Size - 6 of
+		true ->
+			[];
+		false ->
+			case binary:match(Bin, <<"+++">>, [{scope, {From, Size - From}}]) of
+				nomatch ->
+					[];
+				{Open, 3} ->
+					After = Open + 3,
+					case After > Size - 3 of
+						true ->
+							[];
+						false ->
+							case binary:match(Bin, <<"+++">>,
+									[{scope, {After, Size - After}}]) of
+								nomatch ->
+									[];
+								{Close, 3} ->
+									[{Open, Close + 3}
+										|plus_passthroughs(Bin, Close + 3)]
+							end
+					end
+			end
+	end.
+
+skip_end(Pos, [{_, End}|Rest]) when Pos >= End ->
+	skip_end(Pos, Rest);
+skip_end(Pos, [{Open, End}|_]) when Pos >= Open ->
+	End;
+skip_end(Pos, _) ->
+	Pos + 2.
+
+%% Backtick text is not scanned for quotes. A +++ span
+%% inside it is still a passthrough: the delimiters are
+%% removed and the interior is kept as-is.
+splice_passthroughs(Bin) ->
+	case plus_passthroughs(Bin) of
+		[] ->
+			Bin;
+		Spans ->
+			splice_spans(Bin, Spans, 0)
+	end.
+
+splice_spans(Bin, [], From) ->
+	<<_:From/binary, Tail/binary>> = Bin,
+	case Tail of
+		<<>> -> [];
+		_ -> [Tail]
+	end;
+splice_spans(Bin, [{Open, End}|Spans], From) ->
+	BeforeLen = Open - From,
+	InnerLen = End - Open - 6,
+	<<_:From/binary, Before:BeforeLen/binary, "+++",
+		Inner:InnerLen/binary, "+++", _/binary>> = Bin,
+	BeforePiece = case Before of
+		<<>> -> [];
+		_ -> [Before]
+	end,
+	BeforePiece ++ [{passthrough, #{}, Inner, inline}
+		|splice_spans(Bin, Spans, End)].
 
 %% Asciidoc User Guide 10.2
 %%
@@ -380,11 +475,11 @@ subscript(<<$~, Rest/bits>>, _) ->
 	single_mark(Rest, $~, subscript).
 
 single_mark(Rest, C, Type) ->
-	Pos = single_closer(Rest, C, 0),
+	Pos = single_closer(Rest, C, 0, plus_passthroughs(Rest)),
 	<<Content:Pos/binary, _:1/binary, Tail/bits>> = Rest,
 	{ok, {Type, #{}, inline(Content), inline}, Tail}.
 
-single_closer(Bin, C, From) ->
+single_closer(Bin, C, From, Skip) ->
 	Size = byte_size(Bin),
 	case From >= Size of
 		true ->
@@ -393,10 +488,15 @@ single_closer(Bin, C, From) ->
 			case binary:match(Bin, <<C>>, [{scope, {From, Size - From}}]) of
 				nomatch ->
 					error(nomatch);
-				{0, 1} ->
-					single_closer(Bin, C, 1);
 				{Pos, 1} ->
-					Pos
+					case in_span(Pos, Skip) of
+						true ->
+							single_closer(Bin, C, skip_end(Pos, Skip), Skip);
+						false when Pos =:= 0 ->
+							single_closer(Bin, C, 1, Skip);
+						false ->
+							Pos
+					end
 			end
 	end.
 
@@ -419,13 +519,14 @@ quoted_text(<<Left, Rest0/bits>>, Prev, Type, Left, Right) when ?IS_BOUNDARY(Pre
 	}, inline(Content), inline}, Rest}.
 
 %% * and _ have a doubled form. Skip those spans when
-%% looking for the closing mark. Other quotes stop at
-%% the first mark.
+%% looking for the closing mark. +++text+++ is not text
+%% for any quote, so those spans are skipped too.
 constrained_content(Bin, C) when C =:= $*; C =:= $_ ->
-	take_constrained(Bin, C, quote_spans(Bin, C), 0);
+	Passes = plus_passthroughs(Bin),
+	Doubled = quote_spans(Bin, C, 0, Passes),
+	take_constrained(Bin, C, lists:sort(Doubled ++ Passes), 0);
 constrained_content(Bin, C) ->
-	{Content, <<C, Rest/bits>>} = while(fun(Ch) -> Ch =/= C end, Bin),
-	{Content, Rest}.
+	take_constrained(Bin, C, plus_passthroughs(Bin), 0).
 
 take_constrained(Bin, _, _, Pos) when Pos >= byte_size(Bin) ->
 	error(nomatch);
@@ -590,10 +691,121 @@ super_sub_test() ->
 	ok.
 -endif.
 
+-ifdef(TEST).
+unconstrained_mono_test() ->
+	[{monospaced, #{}, <<"mono">>, _}] = inline(<<"++mono++">>),
+	[
+		<<"a">>,
+		{monospaced, #{}, <<"b">>, _},
+		<<"c">>
+	] = inline(<<"a++b++c">>),
+	[{monospaced, #{}, <<" not ">>, _}] = inline(<<"++ not ++">>),
+	<<"++++">> = inline(<<"++++">>),
+	[{monospaced, #{}, <<"+">>, _}] = inline(<<"+++++">>),
+	[{monospaced, #{}, [
+		<<"code ">>,
+		{strong, #{}, <<"bold">>, _}
+	], _}] = inline(<<"++code *bold*++">>),
+	[{passthrough, #{}, <<"<b>raw</b>">>, _}]
+		= inline(<<"+++<b>raw</b>+++">>),
+	[
+		<<"a ">>,
+		{passthrough, #{}, <<"b">>, _},
+		<<" c">>
+	] = inline(<<"a +++b+++ c">>),
+	[
+		{monospaced, #{}, <<"a">>, _},
+		<<" ">>,
+		{passthrough, #{}, <<"b">>, _}
+	] = inline(<<"++a++ +++b+++">>),
+	[{monospaced, #{}, <<"+foo">>, _}] = inline(<<"+++foo++">>),
+	[{monospaced, #{}, <<"foo">>, _}, <<"+">>] = inline(<<"++foo+++">>),
+	%% A +++ span is removed before ++ is paired, even when
+	%% the triple sits inside the doubled marks.
+	[
+		<<"see ">>,
+		{monospaced, #{}, [
+			<<"code ">>,
+			{passthrough, #{}, <<"<b>raw</b>">>, _},
+			<<" more">>
+		], _},
+		<<" please">>
+	] = inline(<<"see ++code +++<b>raw</b>+++ more++ please">>),
+	[<<"++foo ">>, {passthrough, #{}, <<"bar">>, _}]
+		= inline(<<"++foo +++bar+++">>),
+	[{monospaced, #{}, [
+		<<" ">>,
+		{passthrough, #{}, <<"bar">>, _},
+		<<" ">>
+	], _}] = inline(<<"++ +++bar+++ ++">>),
+	%% A line break is a single + at the end of a line.
+	[
+		<<"Stay">>,
+		{line_break, #{}, <<>>, _},
+		<<"put">>
+	] = inline(<<"Stay +\nput">>),
+	ok.
+
+%% +++text+++ is removed before any quote runs. Marks inside
+%% it stay literal, including when the span sits in a quote.
+passthrough_shield_test() ->
+	[{strong, _, [
+		<<"bold ">>,
+		{passthrough, #{}, <<"*not*">>, _},
+		<<" more">>
+	], _}] = inline(<<"*bold +++*not*+++ more*">>),
+	[{strong, _, [
+		<<"bold ">>,
+		{passthrough, #{}, <<"**not**">>, _},
+		<<" more">>
+	], _}] = inline(<<"**bold +++**not**+++ more**">>),
+	[{inline_literal_passthrough, #{}, [
+		<<"tick ">>,
+		{passthrough, #{}, <<"`in`">>, _},
+		<<" here">>
+	], _}] = inline(<<"`tick +++`in`+++ here`">>),
+	[{superscript, #{}, [
+		<<"out ">>,
+		{passthrough, #{}, <<"^in^">>, _},
+		<<" tail">>
+	], _}] = inline(<<"^out +++^in^+++ tail^">>),
+	[{emphasized, _, [
+		<<"em ">>,
+		{passthrough, #{}, <<"__no__">>, _},
+		<<" em">>
+	], _}] = inline(<<"__em +++__no__+++ em__">>),
+	[{monospaced, #{}, [
+		<<" *bold ">>,
+		{passthrough, #{}, <<"*x*">>, _},
+		<<" more ">>
+	], _}] = inline(<<"++ *bold +++*x*+++ more ++">>),
+	[{emphasized, _, [
+		<<"out ">>,
+		{passthrough, #{}, <<"'in'">>, _},
+		<<" tail">>
+	], _}] = inline(<<"'out +++'in'+++ tail'">>),
+	[{subscript, #{}, [
+		<<"out ">>,
+		{passthrough, #{}, <<"~in~">>, _},
+		<<" tail">>
+	], _}] = inline(<<"~out +++~in~+++ tail~">>),
+	[{emphasized, _, [
+		<<"em ">>,
+		{passthrough, #{}, <<"_no_">>, _},
+		<<" em">>
+	], _}] = inline(<<"_em +++_no_+++ em_">>),
+	[{strong, _, [{passthrough, #{}, <<"*not*">>, _}], _}]
+		= inline(<<"*+++*not*+++*">>),
+	ok.
+-endif.
+
 %% Asciidoc User Guide 21.4
+%%
+%% The closing backtick is not one inside +++text+++.
+%% That span is copied through and is not quote text.
 inline_literal_passthrough(<<"`", Rest0/bits>>, Prev) when ?IS_BOUNDARY(Prev) ->
-	{Content, <<"`", Rest/bits>>} = while(fun(C) -> C =/= $` end, Rest0),
-	{ok, {inline_literal_passthrough, #{}, Content, inline}, Rest}.
+	{Content, Rest} = take_constrained(Rest0, $`, plus_passthroughs(Rest0), 0),
+	{ok, {inline_literal_passthrough, #{}, splice_passthroughs(Content), inline}, Rest}.
 
 -ifdef(TEST).
 inline_literal_passthrough_test() ->

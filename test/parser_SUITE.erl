@@ -124,6 +124,44 @@ quoted_text_unconstrained(_) ->
 	], _}] = parse("a _ b and __call__."),
 	ok.
 
+quoted_text_unconstrained_mono(_) ->
+	doc("Unconstrained monospace may appear inside a word. (10.1.2)"),
+	[{paragraph, _, [
+		<<"Use ">>,
+		{monospaced, _, <<"lists:reverse/1">>, _},
+		<<".">>
+	], _}] = parse("Use ++lists:reverse/1++."),
+	[{paragraph, _, [
+		<<"a">>,
+		{monospaced, _, <<"b">>, _},
+		<<"c">>
+	], _}] = parse("a++b++c"),
+	%% +++ is a passthrough, not a ++ quote.
+	[{paragraph, _, [{passthrough, _, <<"<b>raw</b>">>, _}], _}]
+		= parse("+++<b>raw</b>+++"),
+	[{paragraph, _, [
+		{monospaced, _, <<"a">>, _},
+		<<" ">>,
+		{passthrough, _, <<"b">>, _}
+	], _}] = parse("++a++ +++b+++"),
+	%% A +++ span is not quote text for the surrounding marks.
+	[{paragraph, _, [{strong, _, [
+		<<"bold ">>,
+		{passthrough, _, <<"*not*">>, _},
+		<<" more">>
+	], _}], _}] = parse("*bold +++*not*+++ more*"),
+	[{paragraph, _, [{monospaced, _, [
+		<<" *bold ">>,
+		{passthrough, _, <<"*x*">>, _},
+		<<" more ">>
+	], _}], _}] = parse("++ *bold +++*x*+++ more ++"),
+	[{paragraph, _, [{inline_literal_passthrough, _, [
+		<<"tick ">>,
+		{passthrough, _, <<"`in`">>, _},
+		<<" here">>
+	], _}], _}] = parse("`tick +++`in`+++ here`"),
+	ok.
+
 quoted_text_super_sub(_) ->
 	doc("Superscripts and subscripts. (10.2)"),
 	[{paragraph, _, [

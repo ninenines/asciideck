@@ -144,6 +144,7 @@ admonition_body(AST=[{Type, _, _, _}|_])
 		when Type =/= link, Type =/= xref, Type =/= emphasized,
 			Type =/= strong, Type =/= inline_literal_passthrough,
 			Type =/= superscript, Type =/= subscript,
+			Type =/= monospaced, Type =/= passthrough,
 			Type =/= line_break ->
 	ast(AST);
 admonition_body(Text) ->
@@ -318,6 +319,11 @@ inline({superscript, _, Text, _}) ->
 	["<sup>", inline(Text), "</sup>"];
 inline({subscript, _, Text, _}) ->
 	["<sub>", inline(Text), "</sub>"];
+inline({monospaced, _, Text, _}) ->
+	["<code>", inline(Text), "</code>"];
+%% +++passthrough+++ is copied through with no substitutions.
+inline({passthrough, _, Text, _}) ->
+	Text;
 inline({line_break, _, _, _}) ->
 	"<br/>";
 inline(Text) when is_list(Text) ->
@@ -390,6 +396,37 @@ admonition_title_test() ->
 		"<div class=\"content\">"
 		"<div class=\"title\">Watch out</div>\n"
 		"Be careful.</div></div>\n">> = HTML,
+	ok.
+
+passthrough_test() ->
+	AST = asciideck:parse("+++<b>raw</b>+++"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p><b>raw</b></p>\n">> = HTML,
+	Nested = asciideck:parse("see ++code +++<b>raw</b>+++ more++ please"),
+	NestedHTML = iolist_to_binary(translate(Nested, #{no_header_footer => true})),
+	<<"<p>see <code>code <b>raw</b> more</code> please</p>\n">> = NestedHTML,
+	Shield = asciideck:parse("*bold +++*not*+++ more*"),
+	ShieldHTML = iolist_to_binary(translate(Shield, #{no_header_footer => true})),
+	<<"<p><strong>bold *not* more</strong></p>\n">> = ShieldHTML,
+	Mono = asciideck:parse("++ *bold +++*x*+++ more ++"),
+	MonoHTML = iolist_to_binary(translate(Mono, #{no_header_footer => true})),
+	<<"<p><code> *bold *x* more </code></p>\n">> = MonoHTML,
+	Tick = asciideck:parse("`tick +++`in`+++ here`"),
+	TickHTML = iolist_to_binary(translate(Tick, #{no_header_footer => true})),
+	<<"<p><code>tick `in` here</code></p>\n">> = TickHTML,
+	Sup = asciideck:parse("^out +++^in^+++ tail^"),
+	SupHTML = iolist_to_binary(translate(Sup, #{no_header_footer => true})),
+	<<"<p><sup>out ^in^ tail</sup></p>\n">> = SupHTML,
+	ok.
+
+monospaced_test() ->
+	AST = [{paragraph, #{}, [
+		<<"Use ">>,
+		{monospaced, #{}, <<"ok">>, inline},
+		<<".">>
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>Use <code>ok</code>.</p>\n">> = HTML,
 	ok.
 
 super_sub_test() ->
