@@ -319,48 +319,181 @@ labeled_list_item({list_item, #{label := Label}, [{paragraph, _, Text, _}|AST], 
 
 %% Tables.
 
-table({table, _, Rows0, _}) ->
+table({table, Attrs, Rows0, _}) ->
 	Rows = table_apply_options(Rows0),
+	NumCols = table_num_cols(Rows, Attrs),
 	[
 		".TS\n"
 		"allbox tab(:);\n",
-		table_style(Rows), ".\n",
-		table_contents(Rows),
+		table_style(Rows, NumCols), ".\n",
+		table_contents(Rows, NumCols),
 		".TE\n"
 		".sp 1\n"
 	].
 
 %% @todo Currently acts as if options="headers" was always set.
+table_apply_options([]) ->
+	[];
 table_apply_options([{row, RAttrs, Headers0, RAnn}|Tail]) ->
 	Headers = [{cell, CAttrs#{style => <<"strong">>}, CText, CAnn}
 		|| {cell, CAttrs, CText, CAnn} <- Headers0],
 	[{row, RAttrs, Headers, RAnn}|Tail].
 
-table_style(Rows) ->
-	[[table_style_cells(Cells), "\n"]
-		|| {row, _, Cells, _} <- Rows].
+table_num_cols(Rows, Attrs) ->
+	Occupied = [maps:get(col, CellAttrs, 0) + maps:get(colspan, CellAttrs, 1)
+		|| {row, _, Cells, _} <- Rows, {cell, CellAttrs, _, _} <- Cells],
+	Specified = case Attrs of
+		#{columns := Specs} when is_list(Specs) ->
+			length(Specs);
+		_ ->
+			0
+	end,
+	lists:max([1, Specified | Occupied]).
 
-table_style_cells(Cells) ->
-	[case CAttrs of
-		#{style := <<"strong">>} -> "ltb ";
-		_ -> "lt "
-	end || {cell, CAttrs, _, _} <- Cells].
+%% tbl rejects a format that has no data row. An empty table
+%% still carries its column count as one blank row.
+table_style([], NumCols) ->
+	[lists:duplicate(NumCols, "lt "), "\n"];
+table_style(Rows, NumCols) ->
+	format_rows(Rows, NumCols, []).
 
-table_contents(Rows) ->
-	[[table_contents_cells(Cells), "\n"]
-		|| {row, _, Cells, _} <- Rows].
+format_rows([], _, _) ->
+	[];
+format_rows([{row, _, Cells, _}|Rest], NumCols, Prev) ->
+	[format_cols(Cells, 0, NumCols, Prev), "\n"
+		| format_rows(Rest, NumCols, [Cells|Prev])].
 
-table_contents_cells([FirstCell|Cells]) ->
-	[table_contents_cell(FirstCell),
-		[[":", table_contents_cell(Cell)] || Cell <- Cells]].
+format_cols(_, Col, NumCols, _) when Col >= NumCols ->
+	[];
+format_cols(Cells, Col, NumCols, Prev) ->
+	case cell_at(Cells, Col) of
+		{cell, Attrs, _, _} ->
+			Span = maps:get(colspan, Attrs, 1),
+			[cell_format(Attrs), span_format(Span - 1)
+				| format_cols(Cells, Col + Span, NumCols, Prev)];
+		none ->
+			case rowspan_cover(Prev, Col, 1) of
+				none ->
+					["lt " | format_cols(Cells, Col + 1, NumCols, Prev)];
+				Span ->
+					["^ ", span_format(Span - 1)
+						| format_cols(Cells, Col + Span, NumCols, Prev)]
+			end
+	end.
+
+cell_format(Attrs) ->
+	[halign_letter(maps:get(halign, Attrs, <<"left">>)),
+		case maps:get(style, Attrs, <<>>) of
+			<<"strong">> -> "tb ";
+			_ -> "t "
+		end].
+
+halign_letter(<<"center">>) -> "c";
+halign_letter(<<"right">>) -> "r";
+halign_letter(_) -> "l".
+
+span_format(N) when N =< 0 ->
+	[];
+span_format(N) ->
+	["s " | span_format(N - 1)].
+
+table_contents([], NumCols) ->
+	[lists:join(":", lists:duplicate(NumCols, ["T{\n\nT}"])), "\n"];
+table_contents(Rows, NumCols) ->
+	data_rows(Rows, NumCols, []).
+
+data_rows([], _, _) ->
+	[];
+data_rows([{row, _, Cells, _}|Rest], NumCols, Prev) ->
+	[lists:join(":", data_fields(Cells, 0, NumCols, Prev)), "\n"
+		| data_rows(Rest, NumCols, [Cells|Prev])].
+
+data_fields(_, Col, NumCols, _) when Col >= NumCols ->
+	[];
+data_fields(Cells, Col, NumCols, Prev) ->
+	case cell_at(Cells, Col) of
+		Cell={cell, Attrs, _, _} ->
+			Span = maps:get(colspan, Attrs, 1),
+			[table_contents_cell(Cell)
+				| data_fields(Cells, Col + Span, NumCols, Prev)];
+		none ->
+			case rowspan_cover(Prev, Col, 1) of
+				none ->
+					[["T{\n\nT}"] | data_fields(Cells, Col + 1, NumCols, Prev)];
+				Span ->
+					["\\^" | data_fields(Cells, Col + Span, NumCols, Prev)]
+			end
+	end.
+
+cell_at([], _) ->
+	none;
+cell_at([Cell={cell, #{col := Col}, _, _}|_], Col) ->
+	Cell;
+cell_at([_|Rest], Col) ->
+	cell_at(Rest, Col).
+
+%% A rowspan covers this column when the cell above started on it
+%% and its span is still open. The returned width is how many
+%% columns of that span remain, including this one.
+rowspan_cover([], _, _) ->
+	none;
+rowspan_cover([Cells|Rest], Col, Dist) ->
+	case cover_width(Cells, Col, Dist) of
+		none ->
+			rowspan_cover(Rest, Col, Dist + 1);
+		Span ->
+			Span
+	end.
+
+cover_width([], _, _) ->
+	none;
+cover_width([{cell, Attrs, _, _}|Rest], Col, Dist) ->
+	Start = maps:get(col, Attrs, 0),
+	Width = maps:get(colspan, Attrs, 1),
+	Rows = maps:get(rowspan, Attrs, 1),
+	case Start =< Col andalso Col < Start + Width andalso Rows > Dist of
+		true ->
+			Width - (Col - Start);
+		false ->
+			cover_width(Rest, Col, Dist)
+	end.
 
 table_contents_cell({cell, _, Blocks, _}) ->
-	case [Node || Node={Type, _, _, _} <- Blocks, Type =/= comment_block] of
-		[{paragraph, _, Text, _}] ->
-			["T{\n", inline(Text), "\nT}"];
+	case [Node || Node={Type, _, _, _} <- Blocks,
+			Type =/= comment_block, Type =/= comment_line] of
 		[] ->
-			["T{\n\nT}"]
+			["T{\n\nT}"];
+		[Block] ->
+			["T{\n", cell_block(Block), "\nT}"];
+		Many ->
+			["T{\n", lists:join("\n\n", [cell_block(Block) || Block <- Many]), "\nT}"]
 	end.
+
+cell_block({paragraph, _, Text, _}) ->
+	inline(Text);
+cell_block({literal_block, _, Text, _}) ->
+	escape(Text);
+cell_block({literal_paragraph, _, Text, _}) ->
+	escape(Text);
+%% Verse cells hold inline text. A quote cell holds blocks.
+cell_block({quote_block, _, Body, _}) ->
+	case block_list(Body) of
+		true ->
+			lists:join("\n\n", [cell_block(Block) || Block <- Body]);
+		false ->
+			inline(Body)
+	end;
+cell_block(Node) ->
+	ast_node(Node).
+
+block_list([{Type, _, _, _}|_]) ->
+	lists:member(Type, [
+		paragraph, literal_block, literal_paragraph, quote_block,
+		listing_block, list, admonition, open_block, sidebar_block,
+		example_block, table, comment_block, comment_line
+	]);
+block_list(_) ->
+	false.
 
 %% Comment lines are printed in the generated file
 %% but are not visible in viewers.

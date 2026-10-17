@@ -371,40 +371,110 @@ labeled_list_item({list_item, #{label := Label}, AST, _}) ->
 
 %% Tables.
 
+table({table, Attrs, [], _}) ->
+	table_html(Attrs, none);
 table({table, Attrs, [{row, _, Head, _}|Rows], _}) ->
+	table_html(Attrs, {Head, Rows}).
+
+table_html(Attrs, Rows) ->
 	[
 		"<table rules=\"all\" width=\"100%\" frame=\"border\"
 			cellspacing=\"0\" cellpadding=\"4\">\n",
+		colgroup(Attrs),
 		case Attrs of
 			#{<<"title">> := Caption} -> ["<caption>", inline(Caption), "</caption>"];
 			_ -> []
 		end,
-		"<thead><tr>", table_head(Head), "</tr></thead>"
-		"<tbody>", table_body(Rows), "</tbody>"
+		table_sections(Rows),
 		"</table>\n"
 	].
 
+table_sections(none) ->
+	"<tbody></tbody>";
+table_sections({Head, Rows}) ->
+	["<thead><tr>", table_head(Head), "</tr></thead>"
+		"<tbody>", table_body(Rows), "</tbody>"].
+
+colgroup(#{columns := Specs}) when is_list(Specs), Specs =/= [] ->
+	["<colgroup>", [col_tag(Percent) || Percent <- col_percents(Specs)],
+		"</colgroup>\n"];
+colgroup(_) ->
+	[].
+
+col_tag(Percent) ->
+	["<col width=\"", integer_to_binary(Percent), "%\"/>"].
+
+%% A percentage width is already a percentage of the table.
+%% Proportional widths are scaled. A zero total is not divided.
+col_percents(Specs) ->
+	Widths = [maps:get(width, Spec, 1) || Spec <- Specs],
+	Units = [maps:get(width_unit, Spec, proportional) || Spec <- Specs],
+	case lists:all(fun(Unit) -> Unit =:= percent end, Units) of
+		true ->
+			Widths;
+		false ->
+			scale_widths(Widths)
+	end.
+
+scale_widths(Widths) ->
+	case lists:sum(Widths) of
+		0 ->
+			[0 || _ <- Widths];
+		Sum ->
+			[Value * 100 div Sum || Value <- Widths]
+	end.
+
 table_head(Cells) ->
-	[["<th>", table_cell(AST), "</th>\n"]
-		|| {cell, _, AST, _} <- Cells].
+	[[["<th", cell_attrs(Attrs), ">", table_cell(Attrs, AST), "</th>\n"]
+		|| {cell, Attrs, AST, _} <- Cells]].
 
 table_body(Rows) ->
 	[["<tr>", table_body_cells(Cells), "</tr>\n"]
 		|| {row, _, Cells, _} <- Rows].
 
 table_body_cells(Cells) ->
-	[["<td>", table_cell(AST), "</td>\n"]
-		|| {cell, _, AST, _} <- Cells].
+	[[["<td", cell_attrs(Attrs), ">", table_cell(Attrs, AST), "</td>\n"]
+		|| {cell, Attrs, AST, _} <- Cells]].
 
-table_cell(AST0) ->
+cell_attrs(Attrs) ->
+	[
+		span_attr(<<" colspan">>, maps:get(colspan, Attrs, 1)),
+		span_attr(<<" rowspan">>, maps:get(rowspan, Attrs, 1)),
+		align_attr(<<" align">>, maps:get(halign, Attrs, <<"left">>), <<"left">>),
+		align_attr(<<" valign">>, maps:get(valign, Attrs, <<"top">>), <<"top">>)
+	].
+
+span_attr(_, N) when N =< 1 ->
+	[];
+span_attr(Name, N) ->
+	[Name, "=\"", integer_to_binary(N), "\""].
+
+align_attr(_, Value, Value) ->
+	[];
+align_attr(Name, Value, _) ->
+	[Name, "=\"", Value, "\""].
+
+table_cell(Attrs, AST0) ->
 	AST = [Node || Node={Type, _, _, _} <- AST0,
 		Type =/= comment_line, Type =/= comment_block],
-	case AST of
+	Body = case AST of
 		[{paragraph, _, Text, _}] ->
 			inline(Text);
 		_ ->
 			ast(AST)
-	end.
+	end,
+	style_wrap(maps:get(style, Attrs, <<"default">>), Body).
+
+style_wrap(<<"strong">>, Body) ->
+	["<strong>", Body, "</strong>"];
+style_wrap(<<"emphasis">>, Body) ->
+	["<em>", Body, "</em>"];
+style_wrap(<<"monospaced">>, Body) ->
+	["<code>", Body, "</code>"];
+style_wrap(<<"header">>, Body) ->
+	["<strong>", Body, "</strong>"];
+style_wrap(_, Body) ->
+	Body.
 
 %% Block macros.
 
@@ -1394,5 +1464,73 @@ comment_block_test() ->
 		"<td>D</td>\n"
 		"</tr>\n"
 		"</tbody></table>\n">> = TableHTML,
+	Span = asciideck:parse(
+		"[cols=\"e,m,^,>s\"]\n"
+		"|===\n"
+		"|1 >s|2 |3 |4\n"
+		"^|5 2.2+^.^|6 .3+<.>m|7\n"
+		"^|8\n"
+		"|9 2+>|10\n"
+		"|===\n"),
+	SpanHTML = iolist_to_binary(translate(Span, #{no_header_footer => true})),
+	<<"<table rules=\"all\" width=\"100%\" frame=\"border\"\n"
+		"			cellspacing=\"0\" cellpadding=\"4\">\n"
+		"<colgroup><col width=\"25%\"/><col width=\"25%\"/>"
+		"<col width=\"25%\"/><col width=\"25%\"/></colgroup>\n"
+		"<thead><tr><th><em>1</em></th>\n"
+		"<th align=\"right\"><strong>2</strong></th>\n"
+		"<th align=\"center\">3</th>\n"
+		"<th align=\"right\"><strong>4</strong></th>\n"
+		"</tr></thead><tbody><tr>"
+		"<td align=\"center\"><em>5</em></td>\n"
+		"<td colspan=\"2\" rowspan=\"2\" align=\"center\" valign=\"middle\">"
+		"<code>6</code></td>\n"
+		"<td rowspan=\"3\" valign=\"bottom\"><code>7</code></td>\n"
+		"</tr>\n"
+		"<tr><td align=\"center\"><em>8</em></td>\n"
+		"</tr>\n"
+		"<tr><td><em>9</em></td>\n"
+		"<td colspan=\"2\" align=\"right\"><code>10</code></td>\n"
+		"</tr>\n"
+		"</tbody></table>\n">> = SpanHTML,
+	Styles = asciideck:parse(
+		"[cols=\"l,v\"]\n"
+		"|===\n"
+		"|*one*\n"
+		"*two*\n"
+		"\n"
+		"*three* |verse *a*\n"
+		"*b*\n"
+		"|===\n"),
+	StylesHTML = iolist_to_binary(translate(Styles, #{no_header_footer => true})),
+	{_, _} = binary:match(StylesHTML, <<"<div class=\"literalblock\">">>),
+	{_, _} = binary:match(StylesHTML, <<"<pre>*one*\n*two*\n\n*three* ">>),
+	{_, _} = binary:match(StylesHTML, <<"<div class=\"verseblock\">">>),
+	{_, _} = binary:match(StylesHTML, <<"<strong>a</strong>\n<strong>b</strong>">>),
+	nomatch = binary:match(StylesHTML, <<"<strong>one</strong>">>),
+	Percent = asciideck:parse(
+		"[cols=\"20%,20%\"]\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"),
+	PercentHTML = iolist_to_binary(translate(Percent, #{no_header_footer => true})),
+	{_, _} = binary:match(PercentHTML,
+		<<"<col width=\"20%\"/><col width=\"20%\"/>">>),
+	Short = asciideck:parse(
+		"[cols=\"3\"]\n"
+		"|===\n"
+		"|only |two\n"
+		"|===\n"),
+	ShortHTML = iolist_to_binary(translate(Short, #{no_header_footer => true})),
+	{_, _} = binary:match(ShortHTML, <<"<col width=\"33%\"/>">>),
+	{_, _} = binary:match(ShortHTML, <<"<tbody></tbody>">>),
+	nomatch = binary:match(ShortHTML, <<"only">>),
+	Zero = asciideck:parse(
+		"[cols=\"0,0\"]\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"),
+	ZeroHTML = iolist_to_binary(translate(Zero, #{no_header_footer => true})),
+	{_, _} = binary:match(ZeroHTML, <<"<col width=\"0%\"/><col width=\"0%\"/>">>),
 	ok.
 -endif.

@@ -391,3 +391,154 @@ comment_block(_) ->
 	nomatch = binary:match(TableMan, <<"hidden">>),
 	nomatch = binary:match(TableMan, <<"gone">>),
 	ok.
+
+table_span(_) ->
+	doc("Cell spans are kept in man page tables. (23.5)"),
+	AST = asciideck:parse(
+		"= span(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"span - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"3\"]\n"
+		"|===\n"
+		"|1 2+|Two |3\n"
+		"|a |b |c\n"
+		"|===\n"
+		"\n"
+		"[cols=\"2\"]\n"
+		"|===\n"
+		".2+|A |B\n"
+		"|C\n"
+		"|D |E\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"ltb ltb s \n">>),
+	{_, _} = binary:match(Man, <<"T{\n1\nT}:T{\nTwo\nT}\n">>),
+	{_, _} = binary:match(Man, <<"T{\n3\nT}:T{\na\nT}:T{\nb\nT}\n">>),
+	nomatch = binary:match(Man, <<"T{\nc\nT}">>),
+	{_, _} = binary:match(Man, <<"^ lt \n">>),
+	{_, _} = binary:match(Man, <<"\\^:T{\nC\nT}\n">>),
+	{_, _} = binary:match(Man, <<"T{\nA\nT}:T{\nB\nT}\n">>),
+	{_, _} = binary:match(Man, <<"T{\nD\nT}:T{\nE\nT}\n">>),
+	Edge = asciideck:parse(
+		"= edge(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"edge - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"2\"]\n"
+		"|===\n"
+		"|A .2+|B\n"
+		"|C\n"
+		"|D |E\n"
+		"|===\n"
+		"\n"
+		"[cols=\"4\"]\n"
+		"|===\n"
+		"|5 2.2+|6 .2+|7\n"
+		"|8\n"
+		"|9 2+|10 |11\n"
+		"|===\n"),
+	EdgeMan = iolist_to_binary(asciideck:to_manpage(Edge)),
+	{_, _} = binary:match(EdgeMan, <<"lt ^ \n">>),
+	{_, _} = binary:match(EdgeMan, <<"T{\nC\nT}:\\^\n">>),
+	{_, _} = binary:match(EdgeMan, <<"^ s ^ \n">>),
+	{_, _} = binary:match(EdgeMan, <<"T{\n8\nT}:\\^:\\^\n">>),
+	ok.
+
+table_short(_) ->
+	doc("A table with no full row is still written. (23)"),
+	AST = asciideck:parse(
+		"= short(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"short - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"3\"]\n"
+		"|===\n"
+		"|only |two\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<".TS\n">>),
+	{_, _} = binary:match(Man, <<"lt lt lt \n">>),
+	nomatch = binary:match(Man, <<"only">>),
+	ok.
+
+table_paragraphs(_) ->
+	doc("A blank line in a cell does not drop the man table. (23)"),
+	AST = asciideck:parse(
+		"= paras(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"paras - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"1\"]\n"
+		"|===\n"
+		"|para one\n"
+		"\n"
+		"para two\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<".TS\n">>),
+	{_, _} = binary:match(Man, <<"para one">>),
+	{_, _} = binary:match(Man, <<"para two">>),
+	ok.
+
+table_quote_cell(_) ->
+	doc("A quote in a cell does not drop the man table. (23)"),
+	AST = asciideck:parse(
+		"= q(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"q - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"1\"]\n"
+		"|===\n"
+		"|intro\n"
+		"\n"
+		"____\n"
+		"quoted\n"
+		"____\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<".TS\n">>),
+	{_, _} = binary:match(Man, <<"intro">>),
+	{_, _} = binary:match(Man, <<"quoted">>),
+	ok.
+
+table_cell_styles(_) ->
+	doc("Literal and verse cells are written in man tables. (23)"),
+	AST = asciideck:parse(
+		"= styles(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"styles - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"l,v\"]\n"
+		"|===\n"
+		"|*one*\n"
+		"*two* |verse *a*\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"*one*">>),
+	{_, _} = binary:match(Man, <<"\\fBa\\fR">>),
+	ok.
