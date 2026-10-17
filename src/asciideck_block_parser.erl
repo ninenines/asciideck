@@ -172,7 +172,8 @@ section_title(St) ->
 	end,
 	%% Section titles must be followed by at least one empty line.
 	_ = empty_line(St),
-	%% Good!
+	%% Four or five equals and no text is an example delimiter.
+	true = (Title =/= <<>>) orelse (Level < 3),
 	{section_title, #{level => Level}, Title, Ann}.
 
 -ifdef(TEST).
@@ -1834,18 +1835,198 @@ quote_block_test() ->
 -endif.
 
 %% Asciidoc User Guide 16.8
+%%
+%% The body is a section body. A one-line title is not permitted.
+%% A line of equals inside a nested block stays there. A line of
+%% four or more equals ends the example when it is the next block.
 example_block(St) ->
-	delimited_block(St, example_block, $=).
+	Four = <<$=, $=, $=, $=>>,
+	<<Four:4/binary, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	repeats(trim(Line0, trailing), $=),
+	{example_block, #{}, example_body(St), Ann}.
+
+example_body(St) ->
+	skip(fun empty_line/1, St),
+	case example_closer(St) of
+		true ->
+			[];
+		false ->
+			case drop_sidebar_title(St) of
+				true ->
+					example_body(St);
+				false ->
+					example_child(St)
+			end
+	end.
+
+example_child(St) ->
+	case block(St) of
+		eof ->
+			[];
+		%% `==` followed by a blank line is an empty title.
+		%% The marker is text. A non-empty title was already dropped.
+		{section_title, #{level := Level}, <<>>, Ann} ->
+			Marker = binary:copy(<<"=">>, Level + 1),
+			[{paragraph, #{}, Marker, Ann}|example_body(St)];
+		{section_title, _, _, _} ->
+			example_body(St);
+		Child ->
+			[Child|example_body(St)]
+	end.
+
+%% Leave the reader unmoved when this line is not the closer.
+example_closer(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		Four = <<$=, $=, $=, $=>>,
+		<<Four:4/binary, Line0/bits>> = read_line(St),
+		repeats(trim(Line0, trailing), $=),
+		true
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
 
 -ifdef(TEST).
 example_block_test() ->
-	Block = <<
+	[{example_block, _, [
+		{paragraph, _, <<
+			"Qui in magna commodo, est labitur dolorum an. Est ne magna primis\n"
+			"adolescens."
+		>>, _}
+	], _}] = parse(<<
+		"=====================================================================\n"
 		"Qui in magna commodo, est labitur dolorum an. Est ne magna primis\n"
-		"adolescens.">>,
-	[{example_block, _, Block, _}] = parse(<<
-		"=====================================================================\n",
-		Block/binary, "\n"
+		"adolescens.\n"
 		"=====================================================================\n">>),
+	%% Equals inside a nested block do not end the example.
+	[{example_block, _, [
+		{paragraph, _, <<"Intro paragraph is long enough.">>, _},
+		{listing_block, _, <<"====\ncode">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"Intro paragraph is long enough.\n"
+		"\n"
+		"----\n"
+		"====\n"
+		"code\n"
+		"----\n"
+		"====\n">>),
+	%% A section title is not a section body element.
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% A block title stays. It titles the next paragraph.
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{block_title, _, <<"Inner">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		".Inner\n"
+		"after\n"
+		"====\n">>),
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{sidebar_block, _, [{paragraph, _, <<"side">>, _}], _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		"****\n"
+		"side\n"
+		"****\n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% The inner delimiter ends the outer example.
+	[
+		{example_block, _, [{paragraph, _, <<"outer">>, _}], _},
+		{paragraph, _, <<"inner">>, _},
+		{example_block, _, [], _}
+	] = parse(<<
+		"====\n"
+		"outer\n"
+		"\n"
+		"====\n"
+		"inner\n"
+		"====\n"
+		"====\n">>),
+	[{example_block, _, [], _},
+		{paragraph, _, <<"after">>, _}] = parse(<<
+		"====\n"
+		"====\n"
+		"after\n">>),
+	%% A shorter or longer line of equals still closes the example.
+	[{example_block, _, [{paragraph, _, <<"hello">>, _}], _}] = parse(<<
+		"==========\n"
+		"hello\n"
+		"====\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello">>, _}], _}] = parse(<<
+		"====\n"
+		"hello\n"
+		"==========\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello">>, _}], _}] = parse(<<
+		"====  \n"
+		"hello\n"
+		"====\n">>),
+	%% `==== Title` is a one-line title, not a closer.
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		"==== Dropped\n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% A marker with no title text stays text.
+	[{example_block, _, [
+		{paragraph, _, <<"==">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"== \n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% Trailing space and a following blank line are still a delimiter.
+	%% The same line without them would be an empty section title.
+	[{example_block, _, [{paragraph, _, <<"hello there friend">>, _}], _}]
+		= parse(<<
+		"==== \n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"====\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello there friend">>, _}], _}]
+		= parse(<<
+		"====\t\n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"====\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello there friend">>, _}], _}]
+		= parse(<<
+		"===== \n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"=====\n">>),
 	ok.
 -endif.
 

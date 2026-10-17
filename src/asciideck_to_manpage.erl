@@ -81,6 +81,7 @@ ast_node(Node={Type, _, _, _}) ->
 			open_block -> open_block(Node);
 			sidebar_block -> sidebar_block(Node);
 			quote_block -> quote_block(Node);
+			example_block -> example_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);
@@ -218,6 +219,23 @@ man_quote_value(Attrs, Pos, Name) ->
 				Value -> Value
 			end
 	end.
+
+%% Example blocks. A caption prefixes the title.
+%% A caption without a title is not a title line.
+%% Examples are not numbered.
+example_block({example_block, Attrs, Children, _}) ->
+	[example_title(Attrs), ast(Children)].
+
+example_title(#{<<"title">> := Title}=Attrs) ->
+	[".PP\n\\fB", inline(example_caption(Attrs)), inline(Title), "\\fR\n"];
+example_title(_) ->
+	[].
+
+%% The caption attribute includes any separator it wants.
+example_caption(#{<<"caption">> := Caption}) when Caption =/= <<>> ->
+	Caption;
+example_caption(_) ->
+	<<>>.
 
 %% Listing blocks.
 

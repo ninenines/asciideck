@@ -69,6 +69,8 @@ list([{sidebar_block, Attrs, Children, Ann}|Tail], Acc) ->
 	list(Tail, [{sidebar_block, Attrs, run(Children), Ann}|Acc]);
 list([{quote_block, Attrs, Children, Ann}|Tail], Acc) when is_list(Children) ->
 	list(Tail, [{quote_block, Attrs, run(Children), Ann}|Acc]);
+list([{example_block, Attrs, Children, Ann}|Tail], Acc) when is_list(Children) ->
+	list(Tail, [{example_block, Attrs, run(Children), Ann}|Acc]);
 list([Block|Tail], Acc) ->
 	list(Tail, [Block|Acc]).
 
@@ -156,6 +158,8 @@ maybe_lists({sidebar_block, Attrs, Children, Ann}) ->
 	{sidebar_block, Attrs, run(Children), Ann};
 maybe_lists({quote_block, Attrs, Children, Ann}) when is_list(Children) ->
 	{quote_block, Attrs, run(Children), Ann};
+maybe_lists({example_block, Attrs, Children, Ann}) when is_list(Children) ->
+	{example_block, Attrs, run(Children), Ann};
 maybe_lists(Block) ->
 	Block.
 
@@ -515,6 +519,38 @@ quote_block_test() ->
 			[{paragraph, #{}, <<"Item.">>, #{line => 1}}], #{line => 1}},
 		{list_item_continuation, #{}, <<>>, #{line => 2}},
 		{quote_block, #{}, [
+			{list_item, #{type => bulleted, level => 1},
+				[{paragraph, #{}, <<"Inner.">>, #{line => 4}}], #{line => 4}}
+		], #{line => 3}}
+	]),
+	ok.
+
+example_block_test() ->
+	[{example_block, _, [
+		{list, #{type := bulleted, level := 1}, [
+			{list_item, #{type := bulleted, level := 1},
+				[{paragraph, #{}, <<"Inner.">>, _}], _}
+		], _}
+	], _}] = run([
+		{example_block, #{}, [
+			{list_item, #{type => bulleted, level => 1},
+				[{paragraph, #{}, <<"Inner.">>, #{line => 2}}], #{line => 2}}
+		], #{line => 1}}
+	]),
+	[{list, #{type := bulleted, level := 1}, [
+		{list_item, #{type := bulleted, level := 1}, [
+			{paragraph, #{}, <<"Item.">>, _},
+			{example_block, _, [
+				{list, #{type := bulleted, level := 1}, [
+					{list_item, _, [{paragraph, #{}, <<"Inner.">>, _}], _}
+				], _}
+			], _}
+		], _}
+	], _}] = run([
+		{list_item, #{type => bulleted, level => 1},
+			[{paragraph, #{}, <<"Item.">>, #{line => 1}}], #{line => 1}},
+		{list_item_continuation, #{}, <<>>, #{line => 2}},
+		{example_block, #{}, [
 			{list_item, #{type => bulleted, level => 1},
 				[{paragraph, #{}, <<"Inner.">>, #{line => 4}}], #{line => 4}}
 		], #{line => 3}}

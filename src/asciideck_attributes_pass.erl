@@ -20,45 +20,83 @@
 
 -export([run/1]).
 
-run([]) ->
+run(AST) ->
+	finalize(blocks(AST)).
+
+%% Trailing metadata that escaped a nested block has nowhere
+%% to go at the end of the document. Drop it. A comment stays.
+finalize(AST) ->
+	{Body, Pending} = trailing_block_meta(AST),
+	Body ++ blocks(Pending).
+
+blocks([]) ->
 	[];
 %% A block identifier is an alternative way of specifying
 %% the id attribute for a block.
-run([{block_id, #{id := ID}, <<>>, _}|Tail0]) ->
+blocks([{block_id, #{id := ID}, <<>>, _}|Tail0]) ->
 	Tail = apply_attributes(Tail0, #{<<"id">> => ID}),
-	run(Tail);
+	blocks(Tail);
 %% A block title is ultimately treated as an attribute
 %% for the following block.
 %% block_title marks a title line (".Title"), as opposed to
 %% a title attribute. The lists pass uses the mark, then
 %% removes it. A continuation keeps the mark: the title
 %% came before the +, so it is not dropped.
-run([{block_title, _, Title, _}|Tail]) ->
-	run(apply_block_title(Tail, #{<<"title">> => Title, block_title => true}));
-run([{attribute_list, Attrs, <<>>, _}|Tail0]) ->
+blocks([{block_title, _, Title, _}|Tail]) ->
+	blocks(apply_block_title(Tail, #{<<"title">> => Title, block_title => true}));
+blocks([{attribute_list, Attrs, <<>>, _}|Tail0]) ->
 	Tail = apply_attributes(Tail0, Attrs),
-	run(Tail);
-run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
-	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
+	blocks(Tail);
+blocks([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{open_block, Attrs, blocks(Children), Ann}|blocks(Tail)];
 %% Metadata with no following block belongs to the next
 %% block after the sidebar, not to the sidebar.
-run([{sidebar_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
-	{Children, Pending} = trailing_block_meta(Children0),
-	[{sidebar_block, Attrs, run(Children), Ann}|run(Pending ++ Tail)];
+blocks([{sidebar_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
+	close_container(sidebar_block, Attrs, Children0, Ann, Tail);
+%% Metadata with no following block belongs to the next
+%% block after the example, not to the example.
+blocks([{example_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
+	close_container(example_block, Attrs, Children0, Ann, Tail);
 %% Verse is lines of text. A title or attribute list in the
 %% body is part of those lines, not metadata for the next block.
 %% Metadata with no following block belongs to the next block
 %% after a quote, not to the quote.
-run([{quote_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
+blocks([{quote_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
 	case quote_style(Attrs) of
 		<<"verse">> ->
-			[{quote_block, Attrs, Children0, Ann}|run(Tail)];
+			[{quote_block, Attrs, Children0, Ann}|blocks(Tail)];
 		_ ->
-			{Children, Pending} = trailing_block_meta(Children0),
-			[{quote_block, Attrs, run(Children), Ann}|run(Pending ++ Tail)]
+			close_container(quote_block, Attrs, Children0, Ann, Tail)
 	end;
-run([Block|Tail]) ->
-	[Block|run(Tail)].
+blocks([Block|Tail]) ->
+	[Block|blocks(Tail)].
+
+%% A nested block can promote metadata when it is the last child.
+%% That metadata belongs to the next block after this container.
+close_container(Type, Attrs, Children0, Ann, Tail) ->
+	{Children, Pending} = trailing_block_meta(Children0),
+	{Processed, Promoted} = trailing_block_meta(blocks(Children)),
+	[{Type, Attrs, Processed, Ann}|attach_meta(Promoted ++ Pending, Tail)].
+
+%% A tail of only comments and metadata cannot take the attributes.
+%% Leave the nodes in place so the parent container can.
+attach_meta(Pending, Tail) ->
+	case has_target(Tail) of
+		true ->
+			blocks(Pending ++ Tail);
+		false ->
+			Pending ++ Tail
+	end.
+
+has_target([]) ->
+	false;
+has_target([{Type, _, _, _}|Rest]) ->
+	case can_apply(Type) of
+		skip ->
+			has_target(Rest);
+		_ ->
+			true
+	end.
 
 %% A continuation is not the titled block. Keep the mark on
 %% it so the lists pass can tell the title from a later +.
@@ -148,21 +186,30 @@ quote_style(Attrs) ->
 			maps:get(<<"style">>, Attrs, <<"quote">>)
 	end.
 
-%% A title, id, or attribute list at the end of a sidebar
+%% A title, id, or attribute list at the end of a container
 %% has the closer as its next line. It applies outside.
+%% A comment does not hide that metadata, and the comment stays.
 trailing_block_meta(Children) ->
 	{Meta, RevBody} = take_block_meta(lists:reverse(Children), []),
 	{lists:reverse(RevBody), Meta}.
 
-take_block_meta([Node|Rest], Acc) ->
+take_block_meta(Nodes, Acc) ->
+	take_block_meta(Nodes, Acc, []).
+
+take_block_meta([Node|Rest], Acc, Held) ->
 	case block_meta(Node) of
 		true ->
-			take_block_meta(Rest, [Node|Acc]);
+			take_block_meta(Rest, [Node|Acc], Held);
 		false ->
-			{Acc, [Node|Rest]}
+			case block_comment(Node) of
+				true ->
+					take_block_meta(Rest, Acc, [Node|Held]);
+				false ->
+					{Acc, lists:reverse(Held) ++ [Node|Rest]}
+			end
 	end;
-take_block_meta([], Acc) ->
-	{Acc, []}.
+take_block_meta([], Acc, Held) ->
+	{Acc, lists:reverse(Held)}.
 
 block_meta({block_id, _, _, _}) -> true;
 block_meta({attribute_list, _, _, _}) -> true;
@@ -172,6 +219,10 @@ block_meta({block_title, _, _, _}) -> true;
 %% the title, or the title is dropped inside the sidebar.
 block_meta({attribute_entry, _, _, _}) -> true;
 block_meta(_) -> false.
+
+block_comment({comment_line, _, _, _}) -> true;
+block_comment({comment_block, _, _, _}) -> true;
+block_comment(_) -> false.
 
 -ifdef(TEST).
 attribute_list_test() ->
@@ -547,6 +598,316 @@ quote_block_test() ->
 		"____\n"
 		"one\n"
 		"two\n"
+		"____\n")),
+	%% A comment after a nested sidebar does not drop the sidebar's title.
+	[{quote_block, _, [
+		{sidebar_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{comment_line, _, <<"c">>, _}
+	], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"after">>, _}]
+		= run(asciideck_block_parser:parse(
+		"____\n"
+		"****\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"****\n"
+		"// c\n"
+		"____\n"
+		"after\n")),
+	ok.
+
+example_block_test() ->
+	[{example_block, #{
+		<<"caption">> := <<"Example 1: ">>,
+		<<"title">> := <<"An example with a custom caption">>
+	}, [{paragraph, _, <<"Words.">>, _}], _}] = run(asciideck_block_parser:parse(
+		"[caption=\"Example 1: \"]\n"
+		".An example with a custom caption\n"
+		"====\n"
+		"Words.\n"
+		"====\n")),
+	%% The admonition style stays on the example until the transform pass.
+	[{example_block, #{
+		1 := <<"NOTE">>,
+		<<"title">> := <<"A NOTE admonition block">>
+	}, [{paragraph, _, <<"Words.">>, _}], _}] = run(asciideck_block_parser:parse(
+		"[NOTE]\n"
+		".A NOTE admonition block\n"
+		"====\n"
+		"Words.\n"
+		"====\n")),
+	%% A block title inside the example titles the next paragraph.
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, #{<<"title">> := <<"Inner">>}, <<"after">>, _}
+	], _}] = run(asciideck_block_parser:parse(
+		"====\n"
+		"before\n"
+		"\n"
+		".Inner\n"
+		"after\n"
+		"====\n")),
+	[{example_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{attribute_entry, #{name := <<"foo">>}, <<"bar">>, _},
+		{paragraph, #{
+			<<"title">> := <<"Title">>,
+			<<"role">> := <<"x">>
+		}, <<"after">>, _}] = run(asciideck_block_parser:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		":foo: bar\n"
+		"[role=\"x\"]\n"
+		"====\n"
+		"after\n")),
+	%% A comment between the title and the closer stays in the example.
+	[{example_block, _, [
+		{paragraph, _, <<"hello there friend">>, _},
+		{comment_line, _, <<"c">>, _}
+	], _},
+		{paragraph, #{<<"title">> := <<"Title">>},
+			<<"after the example here">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"hello there friend\n"
+		"\n"
+		".Title\n"
+		"// c\n"
+		"\n"
+		"====\n"
+		"after the example here\n")),
+	[{example_block, _, [
+		{paragraph, _, <<"hello there friend">>, _},
+		{comment_line, _, <<"c">>, _}
+	], _},
+		{paragraph, #{<<"title">> := <<"Title">>},
+			<<"after the example here">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"hello there friend\n"
+		"\n"
+		"// c\n"
+		".Title\n"
+		"\n"
+		"====\n"
+		"after the example here\n")),
+	[{example_block, _, [
+		{paragraph, _, <<"hello there friend">>, _},
+		{comment_line, _, <<"c">>, _}
+	], _},
+		{paragraph, #{<<"role">> := <<"x">>},
+			<<"after the example here">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"hello there friend\n"
+		"\n"
+		"[role=\"x\"]\n"
+		"// c\n"
+		"\n"
+		"====\n"
+		"after the example here\n")),
+	[{example_block, _, [
+		{paragraph, _, <<"hello there friend">>, _},
+		{comment_line, _, <<"c">>, _}
+	], _},
+		{paragraph, #{<<"id">> := <<"bid">>},
+			<<"after the example here">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"hello there friend\n"
+		"\n"
+		"[[bid]]\n"
+		"// c\n"
+		"\n"
+		"====\n"
+		"after the example here\n")),
+	[{example_block, _, [
+		{paragraph, _, <<"hello">>, _},
+		{comment_block, _, <<"hidden">>, _}
+	], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"after">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"====\n"
+		"after\n")),
+	%% A comment with a following paragraph keeps the title inside.
+	[{example_block, _, [
+		{paragraph, _, <<"hello">>, _},
+		{comment_line, _, <<"c">>, _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"inside">>, _}
+	], _},
+		{paragraph, _, <<"after">>, _}] = run(asciideck_block_parser:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"// c\n"
+		"inside\n"
+		"\n"
+		"====\n"
+		"after\n")),
+	%% A trailing comment with no metadata stays in the example.
+	[{example_block, _, [
+		{paragraph, _, <<"hello">>, _},
+		{comment_line, _, <<"a">>, _},
+		{comment_line, _, <<"b">>, _}
+	], _}] = run(asciideck_block_parser:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		"// a\n"
+		"// b\n"
+		"====\n")),
+	[{example_block, _, [
+		{paragraph, _, <<"hello">>, _},
+		{comment_line, _, <<"a">>, _},
+		{comment_line, _, <<"b">>, _}
+	], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"after">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"// a\n"
+		"// b\n"
+		"====\n"
+		"after\n")),
+	[{example_block, _, [
+		{paragraph, _, <<"hello there friend">>, _},
+		{comment_line, _, <<"c">>, _}
+	], _},
+		{paragraph, _, <<"after the example here">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"hello there friend\n"
+		"\n"
+		"// c\n"
+		"\n"
+		"====\n"
+		"after the example here\n")),
+	%% A title at the end of a nested quote belongs to the next block
+	%% after the example when the quote ends on the example closer.
+	[{example_block, _, [
+		{quote_block, _, [{paragraph, _, <<"hello">>, _}], _}
+	], _},
+		{example_block, #{<<"title">> := <<"Title">>},
+			[{paragraph, _, <<"body">>, _}], _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"____\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"____\n"
+		"====\n"
+		"====\n"
+		"body\n"
+		"====\n")),
+	[{example_block, _, [
+		{sidebar_block, _, [{paragraph, _, <<"hello">>, _}], _}
+	], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"after">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"****\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"****\n"
+		"====\n"
+		"after\n")),
+	%% The same title stays on the paragraph that follows the quote.
+	[{example_block, _, [
+		{quote_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"inside">>, _}
+	], _}] = run(asciideck_block_parser:parse(
+		"====\n"
+		"____\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"____\n"
+		"inside\n"
+		"====\n")),
+	%% A comment between a nested sidebar and the example closer
+	%% does not drop the sidebar's title.
+	[{example_block, _, [
+		{sidebar_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{comment_line, _, <<"c">>, _}
+	], _},
+		{paragraph, #{<<"title">> := <<"FromSide">>}, <<"next">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"****\n"
+		"hello\n"
+		"\n"
+		".FromSide\n"
+		"****\n"
+		"// c\n"
+		"====\n"
+		"next\n")),
+	[{example_block, _, [
+		{sidebar_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{comment_line, _, <<"c">>, _},
+		{paragraph, #{<<"title">> := <<"FromSide">>}, <<"inside">>, _}
+	], _}] = run(asciideck_block_parser:parse(
+		"====\n"
+		"****\n"
+		"hello\n"
+		"\n"
+		".FromSide\n"
+		"****\n"
+		"// c\n"
+		"inside\n"
+		"====\n")),
+	%% Comments after a title stay in their block. The title still leaves.
+	[{example_block, _, [
+		{sidebar_block, _, [
+			{paragraph, _, <<"hello">>, _},
+			{comment_line, _, <<"cin">>, _}
+		], _},
+		{comment_line, _, <<"cout">>, _}
+	], _},
+		{paragraph, #{<<"title">> := <<"Inner">>}, <<"next">>, _}]
+		= run(asciideck_block_parser:parse(
+		"====\n"
+		"****\n"
+		"hello\n"
+		"\n"
+		".Inner\n"
+		"// cin\n"
+		"****\n"
+		"// cout\n"
+		"====\n"
+		"next\n")),
+	[{example_block, _, [
+		{paragraph, _, <<"hello">>, _},
+		{comment_line, _, <<"a">>, _},
+		{comment_line, _, <<"b">>, _}
+	], _}] = run(asciideck_block_parser:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"// a\n"
+		"// b\n"
+		"====\n")),
+	%% Nothing follows a top-level quote. The title is not left behind.
+	[{quote_block, _, [{paragraph, _, <<"hello">>, _}], _}]
+		= run(asciideck_block_parser:parse(
+		"____\n"
+		"hello\n"
+		"\n"
+		".Title\n"
 		"____\n")),
 	ok.
 -endif.

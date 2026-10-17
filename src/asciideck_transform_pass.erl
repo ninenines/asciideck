@@ -48,6 +48,17 @@ run([{sidebar_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{sidebar_block, Attrs, run(Children), Ann}|run(Tail)];
 run([{quote_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{quote_block, Attrs, run(Children), Ann}|run(Tail)];
+%% User Guide 16.8. An admonition style on an example is an
+%% admonition block. Other examples stay examples.
+run([{example_block, Attrs0=#{1 := Style}, Children, Ann}|Tail])
+		when is_list(Children),
+			(Style =:= <<"NOTE">> orelse Style =:= <<"TIP">> orelse
+				Style =:= <<"IMPORTANT">> orelse Style =:= <<"WARNING">> orelse
+				Style =:= <<"CAUTION">>) ->
+	Attrs = maps:remove(<<"subs">>, Attrs0#{style => Style}),
+	[{admonition, Attrs, run(Children), Ann}|run(Tail)];
+run([{example_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{example_block, Attrs, run(Children), Ann}|run(Tail)];
 run([{list, Attrs, Items, Ann}|Tail]) ->
 	[{list, Attrs, run(Items), Ann}|run(Tail)];
 run([{list_item, Attrs, Children, Ann}|Tail]) ->
@@ -232,6 +243,27 @@ quote_block_test() ->
 		{literal_paragraph, #{<<"subs">> := <<"verbatim">>}, <<"kept *stars*">>, _}
 	], _}] = run([
 		{quote_block, #{}, [
+			{paragraph, #{1 => <<"literal">>}, <<"kept *stars*">>, #{line => 2}}
+		], #{line => 1}}
+	]),
+	ok.
+
+example_block_test() ->
+	[{admonition, #{
+		1 := <<"NOTE">>,
+		style := <<"NOTE">>,
+		<<"title">> := <<"Careful">>
+	}, [
+		{paragraph, #{}, <<"Hello.">>, _}
+	], _}] = run([
+		{example_block, #{1 => <<"NOTE">>, <<"title">> => <<"Careful">>}, [
+			{paragraph, #{}, <<"Hello.">>, #{line => 2}}
+		], #{line => 1}}
+	]),
+	[{example_block, _, [
+		{literal_paragraph, #{<<"subs">> := <<"verbatim">>}, <<"kept *stars*">>, _}
+	], _}] = run([
+		{example_block, #{<<"caption">> => <<"Example 1: ">>}, [
 			{paragraph, #{1 => <<"literal">>}, <<"kept *stars*">>, #{line => 2}}
 		], #{line => 1}}
 	]),

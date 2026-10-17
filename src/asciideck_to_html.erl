@@ -77,6 +77,7 @@ ast_node(Node={Type, _, _, _}) ->
 			open_block -> open_block(Node);
 			sidebar_block -> sidebar_block(Node);
 			quote_block -> quote_block(Node);
+			example_block -> example_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);
@@ -293,6 +294,30 @@ quote_value(Attrs, Pos, Name) ->
 				Value -> Value
 			end
 	end.
+
+%% Example blocks. The title sits before the body.
+%% A caption prefixes that title. It is not a title alone.
+%% Examples are not numbered.
+example_block({example_block, Attrs, Children, _}) ->
+	[
+		"<div class=\"exampleblock\">\n",
+		example_title(Attrs),
+		"<div class=\"content\">\n",
+		ast(Children),
+		"</div></div>\n"
+	].
+
+example_title(#{<<"title">> := Title}=Attrs) ->
+	["<div class=\"title\">", inline(example_caption(Attrs)),
+		inline(Title), "</div>\n"];
+example_title(_) ->
+	[].
+
+%% The caption attribute includes any separator it wants.
+example_caption(#{<<"caption">> := Caption}) when Caption =/= <<>> ->
+	Caption;
+example_caption(_) ->
+	<<>>.
 
 %% Open blocks.
 
@@ -1040,5 +1065,261 @@ verse_block_test() ->
 		"</div>\n"
 		"</div>\n",
 		_/bits>> = ContHTML,
+	ok.
+
+example_block_test() ->
+	Plain = asciideck:parse(
+		"====\n"
+		"Hello *world*.\n"
+		"\n"
+		"Second.\n"
+		"====\n"),
+	PlainHTML = iolist_to_binary(translate(Plain, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Hello <strong>world</strong>.</p>\n"
+		"<p>Second.</p>\n"
+		"</div></div>\n">> = PlainHTML,
+	Titled = asciideck:parse(
+		".An example\n"
+		"====\n"
+		"Qui in magna commodo, est labitur dolorum an. Est ne magna primis\n"
+		"adolescens.\n"
+		"====\n"),
+	TitledHTML = iolist_to_binary(translate(Titled, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">An example</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Qui in magna commodo, est labitur dolorum an. "
+			"Est ne magna primis adolescens.</p>\n"
+		"</div></div>\n">> = TitledHTML,
+	Caption = asciideck:parse(
+		"[caption=\"Example 1: \"]\n"
+		".An example with a custom caption\n"
+		"====\n"
+		"Words.\n"
+		"====\n"),
+	CaptionHTML = iolist_to_binary(translate(Caption, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">Example 1: An example with a custom caption</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = CaptionHTML,
+	CaptionOnly = asciideck:parse(
+		"[caption=\"Example 1: \"]\n"
+		"====\n"
+		"Words.\n"
+		"====\n"),
+	CaptionOnlyHTML = iolist_to_binary(translate(CaptionOnly,
+		#{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = CaptionOnlyHTML,
+	Encoded = translate([{example_block, #{
+		<<"caption">> => <<"A & B: ">>,
+		<<"title">> => <<"<x>">>
+	}, [
+		{paragraph, #{}, <<"Words.">>, #{line => 1}}
+	], #{line => 1}}], #{no_header_footer => true}),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">A &amp; B: &lt;x&gt;</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = iolist_to_binary(Encoded),
+	EmptyCap = translate([{example_block, #{
+		<<"caption">> => <<>>,
+		<<"title">> => <<"An example">>
+	}, [
+		{paragraph, #{}, <<"Words.">>, #{line => 1}}
+	], #{line => 1}}], #{no_header_footer => true}),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">An example</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = iolist_to_binary(EmptyCap),
+	Role = asciideck:parse(
+		"[role=\"x\"]\n"
+		"====\n"
+		"hello\n"
+		"====\n"),
+	RoleHTML = iolist_to_binary(translate(Role, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello</p>\n"
+		"</div></div>\n">> = RoleHTML,
+	Listed = asciideck:parse(
+		"====\n"
+		"* One.\n"
+		"====\n"),
+	ListedHTML = iolist_to_binary(translate(Listed, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<ul><li>One.\n</li>\n</ul>\n"
+		"</div></div>\n">> = ListedHTML,
+	Listing = asciideck:parse(
+		"====\n"
+		"Intro paragraph is long enough.\n"
+		"\n"
+		"----\n"
+		"====\n"
+		"code\n"
+		"----\n"
+		"====\n"),
+	ListingHTML = iolist_to_binary(translate(Listing, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Intro paragraph is long enough.</p>\n"
+		"<div class=\"listingblock\">"
+		"<div class=\"content\">"
+		"<pre>====\ncode</pre>"
+		"</div></div>\n"
+		"</div></div>\n">> = ListingHTML,
+	Dropped = asciideck:parse(
+		"====\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"====\n"),
+	DroppedHTML = iolist_to_binary(translate(Dropped, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>before</p>\n"
+		"<p>after</p>\n"
+		"</div></div>\n">> = DroppedHTML,
+	Side = asciideck:parse(
+		"====\n"
+		"before\n"
+		"\n"
+		"****\n"
+		"side\n"
+		"****\n"
+		"\n"
+		"after\n"
+		"====\n"),
+	SideHTML = iolist_to_binary(translate(Side, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>before</p>\n"
+		"<div class=\"sidebarblock\"><div class=\"content\">"
+		"<p>side</p>\n"
+		"</div></div>\n"
+		"<p>after</p>\n"
+		"</div></div>\n">> = SideHTML,
+	Note = asciideck:parse(
+		"[NOTE]\n"
+		".A NOTE admonition block\n"
+		"====\n"
+		"Hello *bold*.\n"
+		"\n"
+		"* One.\n"
+		"====\n"),
+	NoteHTML = iolist_to_binary(translate(Note, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">"
+		"<div class=\"title\">A NOTE admonition block</div>\n"
+		"<p>Hello <strong>bold</strong>.</p>\n"
+		"<ul><li>One.\n</li>\n</ul>\n"
+		"</div></div>\n">> = NoteHTML,
+	Nested = asciideck:parse(
+		"====\n"
+		"outer\n"
+		"\n"
+		"====\n"
+		"inner\n"
+		"====\n"
+		"====\n"),
+	NestedHTML = iolist_to_binary(translate(Nested, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>outer</p>\n"
+		"</div></div>\n"
+		"<p>inner</p>\n"
+		"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"</div></div>\n">> = NestedHTML,
+	Empty = asciideck:parse(
+		"====\n"
+		"====\n"
+		"after\n"),
+	EmptyHTML = iolist_to_binary(translate(Empty, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"</div></div>\n"
+		"<p>after</p>\n">> = EmptyHTML,
+	NestedTitle = asciideck:parse(
+		"====\n"
+		"____\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"____\n"
+		"====\n"
+		"====\n"
+		"body\n"
+		"====\n"),
+	NestedTitleHTML = iolist_to_binary(translate(NestedTitle,
+		#{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n"
+		"</div></div>\n"
+		"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">Title</div>\n"
+		"<div class=\"content\">\n"
+		"<p>body</p>\n"
+		"</div></div>\n">> = NestedTitleHTML,
+	Spaced = asciideck:parse(
+		"==== \n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"====\n"),
+	SpacedHTML = iolist_to_binary(translate(Spaced, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello there friend</p>\n"
+		"</div></div>\n">> = SpacedHTML,
+	TrailComment = asciideck:parse(
+		"====\n"
+		"hello there friend\n"
+		"\n"
+		".Title\n"
+		"// c\n"
+		"\n"
+		"====\n"
+		"after the example here\n"),
+	TrailCommentHTML = iolist_to_binary(translate(TrailComment,
+		#{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello there friend</p>\n"
+		"<!-- c-->\n"
+		"</div></div>\n"
+		"<p>after the example here</p>\n">> = TrailCommentHTML,
+	Trail = asciideck:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		":foo: bar\n"
+		"[role=\"x\"]\n"
+		"====\n"
+		"after\n"),
+	TrailHTML = iolist_to_binary(translate(Trail, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello</p>\n"
+		"</div></div>\n"
+		"<p>after</p>\n">> = TrailHTML,
 	ok.
 -endif.

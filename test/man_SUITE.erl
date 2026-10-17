@@ -230,3 +230,59 @@ quote_block(_) ->
 	{_, _} = binary:match(NamedMan, <<".nf\none\ntwo\n.fi\n">>),
 	{_, _} = binary:match(NamedMan, <<"\\(em Ann">>),
 	ok.
+
+example_block(_) ->
+	doc("Example blocks are rendered in man pages. (16.8)"),
+	AST = asciideck:parse(
+		"= example(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"example - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[caption=\"Example 1: \"]\n"
+		".C:\\Windows\n"
+		"====\n"
+		"Hello *bold*.\n"
+		"====\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBExample 1: C:\\\\Windows\\fR">>),
+	{_, _} = binary:match(Man, <<"Hello \\fBbold\\fR.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	Caption = asciideck:parse(
+		"= caption(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"caption - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[caption=\"Example 1: \"]\n"
+		"====\n"
+		"Words.\n"
+		"====\n"),
+	CaptionMan = iolist_to_binary(asciideck:to_manpage(Caption)),
+	nomatch = binary:match(CaptionMan, <<"Example 1:">>),
+	{_, _} = binary:match(CaptionMan, <<"Words.">>),
+	Note = asciideck:parse(
+		"= note(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"note - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[NOTE]\n"
+		".Careful\n"
+		"====\n"
+		"Hello.\n"
+		"====\n"),
+	NoteMan = iolist_to_binary(asciideck:to_manpage(Note)),
+	{_, _} = binary:match(NoteMan, <<"\\fBNote: Careful\\fR">>),
+	{_, _} = binary:match(NoteMan, <<"Hello.">>),
+	nomatch = binary:match(NoteMan, <<"Ignored AST node">>),
+	ok.

@@ -400,7 +400,7 @@ paragraph_ends(_) ->
 		"----\n"),
 	[
 		{paragraph, _, <<"Hello">>, _},
-		{example_block, _, <<"code">>, _}
+		{example_block, _, [{paragraph, _, <<"code">>, _}], _}
 	] = parse(
 		"Hello\n"
 		"====\n"

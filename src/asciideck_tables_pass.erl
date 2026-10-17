@@ -34,6 +34,8 @@ run([{sidebar_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{sidebar_block, Attrs, run(Children), Ann}|run(Tail)];
 run([{quote_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{quote_block, Attrs, run(Children), Ann}|run(Tail)];
+run([{example_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{example_block, Attrs, run(Children), Ann}|run(Tail)];
 %% A NOTE open block is an admonition by this pass. Its body is
 %% a list of blocks, unlike an admonition paragraph.
 run([{admonition, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
@@ -97,6 +99,21 @@ quote_block_test() ->
 		], _}
 	], _}] = run([
 		{quote_block, #{}, [
+			{table, #{}, <<"|1 |2">>, #{line => 2}}
+		], #{line => 1}}
+	]),
+	ok.
+
+example_block_test() ->
+	[{example_block, _, [
+		{table, _, [
+			{row, _, [
+				{cell, _, [{paragraph, _, <<"1">>, _}], _},
+				{cell, _, [{paragraph, _, <<"2">>, _}], _}
+			], _}
+		], _}
+	], _}] = run([
+		{example_block, #{}, [
 			{table, #{}, <<"|1 |2">>, #{line => 2}}
 		], #{line => 1}}
 	]),
