@@ -28,3 +28,517 @@ missing_name_section(_) ->
 	AST = asciideck:parse("= missing_name(3)\n\n== Not name\n\nFail!"),
 	{'EXIT', _} = (catch asciideck:to_manpage(AST)),
 	ok.
+
+callout_list(_) ->
+	doc("Callout lists are numbered by position. (20)"),
+	AST = asciideck:parse(
+		"= callout(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"callout - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"> First.\n"
+		"> Second.\n"
+		"<9> Third.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<".IP 1\nFirst.">>),
+	{_, _} = binary:match(Man, <<".IP 2\nSecond.">>),
+	{_, _} = binary:match(Man, <<".IP 3\nThird.">>),
+	nomatch = binary:match(Man, <<".IP 9">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.
+
+attribute_entry(_) ->
+	doc("Attribute entries are omitted from man page output. (28)"),
+	AST = asciideck:parse(
+		"= attr(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"attr - test\n"
+		"\n"
+		":author: Loic Hoguin\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"Hello.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"Hello.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	nomatch = binary:match(Man, <<"Loic Hoguin">>),
+	ok.
+
+admonition_paragraph(_) ->
+	doc("Admonition paragraphs are rendered in man pages. (15.4)"),
+	AST = asciideck:parse(
+		"= admonition(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"admonition - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"NOTE: The static handler considers that the local filesystem "
+			"is trusted.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBNote\\fR">>),
+	{_, _} = binary:match(Man, <<"The static handler considers that the local filesystem is trusted.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.
+
+open_block_style(_) ->
+	doc("Styled open blocks are rendered in man pages. (16.10)"),
+	AST = asciideck:parse(
+		"= open(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"open - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[listing]\n"
+		"--\n"
+		"f() -> ok.\n"
+		"--\n"
+		"\n"
+		"[NOTE]\n"
+		"--\n"
+		"Careful.\n"
+		"\n"
+		"* One.\n"
+		"--\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"f() -> ok.">>),
+	{_, _} = binary:match(Man, <<"\\fBNote\\fR">>),
+	{_, _} = binary:match(Man, <<"Careful.">>),
+	{_, _} = binary:match(Man, <<"One.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.
+
+super_sub(_) ->
+	doc("Superscripts and subscripts are rendered in man pages. (10.2)"),
+	AST = asciideck:parse(
+		"= super(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"super - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"H~2~O and x^10^.\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"H\\d2\\uO">>),
+	{_, _} = binary:match(Man, <<"x\\u10\\d.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	ok.
+
+sidebar_block(_) ->
+	doc("Sidebar blocks are rendered in man pages. (16.4)"),
+	AST = asciideck:parse(
+		"= sidebar(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"sidebar - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		".An Example Sidebar\n"
+		"****\n"
+		"Outside the narrative.\n"
+		"****\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBAn Example Sidebar\\fR">>),
+	{_, _} = binary:match(Man, <<"Outside the narrative.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	AST2 = asciideck:parse(
+		"= sidebar(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"sidebar - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		".C:\\Windows\n"
+		"****\n"
+		"body\n"
+		"****\n"),
+	Man2 = iolist_to_binary(asciideck:to_manpage(AST2)),
+	{_, _} = binary:match(Man2, <<"\\fBC:\\\\Windows\\fR">>),
+	ok.
+
+quote_block(_) ->
+	doc("Quote and verse blocks are rendered in man pages. (16.7)"),
+	AST = asciideck:parse(
+		"= quote(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"quote - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		".My Quote\n"
+		"[quote, C:\\Ann, The Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBMy Quote\\fR">>),
+	{_, _} = binary:match(Man, <<"Words.">>),
+	{_, _} = binary:match(Man, <<"\\fIThe Book\\fR">>),
+	{_, _} = binary:match(Man, <<"\\(em C:\\\\Ann">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	Verse = asciideck:parse(
+		"= verse(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"verse - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[verse]\n"
+		"____\n"
+		"To *see* a world\n"
+		"____\n"),
+	VerseMan = iolist_to_binary(asciideck:to_manpage(Verse)),
+	{_, _} = binary:match(VerseMan, <<".nf\nTo \\fBsee\\fR a world\n.fi\n">>),
+	nomatch = binary:match(VerseMan, <<"Ignored AST node">>),
+	Named = asciideck:parse(
+		"= named(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"named - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[style=\"verse\", attribution=\"Ann\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	NamedMan = iolist_to_binary(asciideck:to_manpage(Named)),
+	{_, _} = binary:match(NamedMan, <<".nf\none\ntwo\n.fi\n">>),
+	{_, _} = binary:match(NamedMan, <<"\\(em Ann">>),
+	ok.
+
+example_block(_) ->
+	doc("Example blocks are rendered in man pages. (16.8)"),
+	AST = asciideck:parse(
+		"= example(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"example - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[caption=\"Example 1: \"]\n"
+		".C:\\Windows\n"
+		"====\n"
+		"Hello *bold*.\n"
+		"====\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBExample 1: C:\\\\Windows\\fR">>),
+	{_, _} = binary:match(Man, <<"Hello \\fBbold\\fR.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	Caption = asciideck:parse(
+		"= caption(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"caption - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[caption=\"Example 1: \"]\n"
+		"====\n"
+		"Words.\n"
+		"====\n"),
+	CaptionMan = iolist_to_binary(asciideck:to_manpage(Caption)),
+	nomatch = binary:match(CaptionMan, <<"Example 1:">>),
+	{_, _} = binary:match(CaptionMan, <<"Words.">>),
+	Note = asciideck:parse(
+		"= note(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"note - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[NOTE]\n"
+		".Careful\n"
+		"====\n"
+		"Hello.\n"
+		"====\n"),
+	NoteMan = iolist_to_binary(asciideck:to_manpage(Note)),
+	{_, _} = binary:match(NoteMan, <<"\\fBNote: Careful\\fR">>),
+	{_, _} = binary:match(NoteMan, <<"Hello.">>),
+	nomatch = binary:match(NoteMan, <<"Ignored AST node">>),
+	ok.
+
+comment_block(_) ->
+	doc("Comment blocks are kept out of man pages. (16.5)"),
+	AST = asciideck:parse(
+		"= comment(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"comment - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"////\n"
+		"hidden stars\n"
+		"////\n"
+		"\n"
+		"Visible.\n"),
+	[{paragraph, _, <<"Visible.">>, _},
+		{comment_block, _, <<"hidden stars">>, _}|_] = lists:reverse(AST),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"Visible.">>),
+	nomatch = binary:match(Man, <<"hidden stars">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	BeforeTitle = asciideck:parse(
+		"////\n"
+		"one\n"
+		"////\n"
+		"\n"
+		"////\n"
+		"two\n"
+		"////\n"
+		"\n"
+		"= foo(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"foo - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"Visible.\n"),
+	[{comment_block, _, <<"one">>, _},
+		{comment_block, _, <<"two">>, _}|_] = BeforeTitle,
+	BeforeTitleMan = iolist_to_binary(asciideck:to_manpage(BeforeTitle)),
+	{_, _} = binary:match(BeforeTitleMan, <<".TH \"foo\"">>),
+	{_, _} = binary:match(BeforeTitleMan, <<"Visible.">>),
+	nomatch = binary:match(BeforeTitleMan, <<"one">>),
+	nomatch = binary:match(BeforeTitleMan, <<"two">>),
+	BeforeName = asciideck:parse(
+		"= foo(3)\n"
+		"\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"foo - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"Visible.\n"),
+	[{section_title, #{level := 0}, <<"foo(3)">>, _},
+		{comment_block, _, <<"hidden">>, _}|_] = BeforeName,
+	BeforeNameMan = iolist_to_binary(asciideck:to_manpage(BeforeName)),
+	{_, _} = binary:match(BeforeNameMan, <<"Visible.">>),
+	nomatch = binary:match(BeforeNameMan, <<"hidden">>),
+	Table = asciideck:parse(
+		"= c(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"c - t\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"|===\n"
+		"|A |B\n"
+		"|C\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"|D\n"
+		"|\n"
+		"////\n"
+		"gone\n"
+		"////\n"
+		"|E\n"
+		"|===\n"
+		"\n"
+		"Visible.\n"),
+	[{table, _, Rows, _}] = [Node || Node={table, _, _, _} <- Table],
+	{row, _, [{cell, _, [
+		{comment_block, _, <<"gone">>, _}
+	], _}, _], _} = lists:last(Rows),
+	TableMan = iolist_to_binary(asciideck:to_manpage(Table)),
+	{_, _} = binary:match(TableMan, <<"T{\nA\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nB\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nC\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nD\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nE\nT}">>),
+	{_, _} = binary:match(TableMan, <<"Visible.">>),
+	nomatch = binary:match(TableMan, <<"hidden">>),
+	nomatch = binary:match(TableMan, <<"gone">>),
+	ok.
+
+table_span(_) ->
+	doc("Cell spans are kept in man page tables. (23.5)"),
+	AST = asciideck:parse(
+		"= span(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"span - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"3\"]\n"
+		"|===\n"
+		"|1 2+|Two |3\n"
+		"|a |b |c\n"
+		"|===\n"
+		"\n"
+		"[cols=\"2\"]\n"
+		"|===\n"
+		".2+|A |B\n"
+		"|C\n"
+		"|D |E\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"ltb ltb s \n">>),
+	{_, _} = binary:match(Man, <<"T{\n1\nT}:T{\nTwo\nT}\n">>),
+	{_, _} = binary:match(Man, <<"T{\n3\nT}:T{\na\nT}:T{\nb\nT}\n">>),
+	nomatch = binary:match(Man, <<"T{\nc\nT}">>),
+	{_, _} = binary:match(Man, <<"^ lt \n">>),
+	{_, _} = binary:match(Man, <<"\\^:T{\nC\nT}\n">>),
+	{_, _} = binary:match(Man, <<"T{\nA\nT}:T{\nB\nT}\n">>),
+	{_, _} = binary:match(Man, <<"T{\nD\nT}:T{\nE\nT}\n">>),
+	Edge = asciideck:parse(
+		"= edge(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"edge - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"2\"]\n"
+		"|===\n"
+		"|A .2+|B\n"
+		"|C\n"
+		"|D |E\n"
+		"|===\n"
+		"\n"
+		"[cols=\"4\"]\n"
+		"|===\n"
+		"|5 2.2+|6 .2+|7\n"
+		"|8\n"
+		"|9 2+|10 |11\n"
+		"|===\n"),
+	EdgeMan = iolist_to_binary(asciideck:to_manpage(Edge)),
+	{_, _} = binary:match(EdgeMan, <<"lt ^ \n">>),
+	{_, _} = binary:match(EdgeMan, <<"T{\nC\nT}:\\^\n">>),
+	{_, _} = binary:match(EdgeMan, <<"^ s ^ \n">>),
+	{_, _} = binary:match(EdgeMan, <<"T{\n8\nT}:\\^:\\^\n">>),
+	ok.
+
+table_short(_) ->
+	doc("A table with no full row is still written. (23)"),
+	AST = asciideck:parse(
+		"= short(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"short - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"3\"]\n"
+		"|===\n"
+		"|only |two\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<".TS\n">>),
+	{_, _} = binary:match(Man, <<"lt lt lt \n">>),
+	nomatch = binary:match(Man, <<"only">>),
+	ok.
+
+table_paragraphs(_) ->
+	doc("A blank line in a cell does not drop the man table. (23)"),
+	AST = asciideck:parse(
+		"= paras(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"paras - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"1\"]\n"
+		"|===\n"
+		"|para one\n"
+		"\n"
+		"para two\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<".TS\n">>),
+	{_, _} = binary:match(Man, <<"para one">>),
+	{_, _} = binary:match(Man, <<"para two">>),
+	ok.
+
+table_quote_cell(_) ->
+	doc("A quote in a cell does not drop the man table. (23)"),
+	AST = asciideck:parse(
+		"= q(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"q - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"1\"]\n"
+		"|===\n"
+		"|intro\n"
+		"\n"
+		"____\n"
+		"quoted\n"
+		"____\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<".TS\n">>),
+	{_, _} = binary:match(Man, <<"intro">>),
+	{_, _} = binary:match(Man, <<"quoted">>),
+	ok.
+
+table_cell_styles(_) ->
+	doc("Literal and verse cells are written in man tables. (23)"),
+	AST = asciideck:parse(
+		"= styles(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"styles - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[cols=\"l,v\"]\n"
+		"|===\n"
+		"|*one*\n"
+		"*two* |verse *a*\n"
+		"|===\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"*one*">>),
+	{_, _} = binary:match(Man, <<"\\fBa\\fR">>),
+	ok.

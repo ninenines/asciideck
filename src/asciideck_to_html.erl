@@ -18,7 +18,7 @@
 
 translate(AST, Opts) ->
 	Output0 = ast(AST),
-	Output1 = maybe_header_footer(Output0, Opts),
+	Output1 = maybe_header_footer(Output0, AST, Opts),
 	{CompressExt, Output} = case Opts of
 		#{compress := gzip} -> {".gz", zlib:gzip(Output1)};
 		_ -> {"", Output1}
@@ -35,21 +35,82 @@ translate(AST, Opts) ->
 			Output
 	end.
 
-maybe_header_footer(Body, #{no_header_footer := _}) ->
+maybe_header_footer(Body, _AST, #{no_header_footer := _}) ->
 	Body;
-maybe_header_footer(Body, _Opts) ->
+maybe_header_footer(Body, AST, _Opts) ->
 	[
 		"<!DOCTYPE html>\n"
 		"<html lang=\"en\">\n"
 		"<head>\n"
 		"<meta charset=\"utf-8\"/>\n"
-		"<title>TODO title</title>\n" %% @todo
+		"<title>", html_title(AST), "</title>\n"
 		"</head>\n"
 		"<body>\n",
 		Body,
 		"</body>\n"
 		"</html>\n"
 	].
+
+%% The document header is whatever leads the AST: comment lines,
+%% comment blocks, attribute entries, and one level-0 title.
+%% A title attribute in that header replaces the document title.
+%% Emptying it leaves the element empty. Unsetting it falls
+%% back to the document title. The first other block ends the
+%% header, so a later level-0 title is not the document title.
+
+html_title(AST) ->
+	case html_title(AST, unset) of
+		{set, Value} ->
+			html_encode(Value);
+		{doc, Title} ->
+			title_text(Title);
+		unset ->
+			[]
+	end.
+
+html_title([{comment_line, _, _, _}|Rest], Found) ->
+	html_title(Rest, Found);
+html_title([{comment_block, _, _, _}|Rest], Found) ->
+	html_title(Rest, Found);
+html_title([{attribute_entry, #{name := <<"title">>, unset := true}, _, _}|Rest], _) ->
+	html_title(Rest, unset);
+html_title([{attribute_entry, #{name := <<"title">>}, Value, _}|Rest], _) ->
+	html_title(Rest, {set, Value});
+html_title([{attribute_entry, _, _, _}|Rest], Found) ->
+	html_title(Rest, Found);
+html_title([{section_title, #{level := 0}, Title, _}|_], unset) ->
+	{doc, Title};
+html_title(_, Found) ->
+	Found.
+
+%% <title> is RCDATA: only a title end tag closes it. The tags this
+%% function emits do not. +++passthrough+++ is copied raw into the
+%% body, so the same text here is encoded instead.
+
+title_text(Text) when is_binary(Text) ->
+	html_encode(Text);
+title_text({link, #{target := Target}, Text, _}) ->
+	["<a href=\"", html_encode(Target), "\">", title_text(Text), "</a>"];
+title_text({xref, #{id := ID}, Text, _}) ->
+	["<a href=\"#", html_encode(ID), "\">", title_text(Text), "</a>"];
+title_text({emphasized, _, Text, _}) ->
+	["<em>", title_text(Text), "</em>"];
+title_text({strong, _, Text, _}) ->
+	["<strong>", title_text(Text), "</strong>"];
+title_text({inline_literal_passthrough, _, Text, _}) ->
+	["<code>", title_text(Text), "</code>"];
+title_text({superscript, _, Text, _}) ->
+	["<sup>", title_text(Text), "</sup>"];
+title_text({subscript, _, Text, _}) ->
+	["<sub>", title_text(Text), "</sub>"];
+title_text({monospaced, _, Text, _}) ->
+	["<code>", title_text(Text), "</code>"];
+title_text({passthrough, _, Text, _}) ->
+	title_text(Text);
+title_text({line_break, _, _, _}) ->
+	"<br/>";
+title_text(Text) when is_list(Text) ->
+	[title_text(T) || T <- Text].
 
 filename_from_ast([{section_title, #{level := 0}, Filename, _}|_]) ->
 	Filename.
@@ -69,12 +130,21 @@ ast_node(Node={Type, _, _, _}) ->
 		case Type of
 			section_title -> section_title(Node);
 			paragraph -> paragraph(Node);
+			admonition -> admonition(Node);
+			literal_paragraph -> literal_paragraph(Node);
+			literal_block -> literal_paragraph(Node);
 			listing_block -> listing_block(Node);
 			passthrough_block -> passthrough_block(Node);
+			open_block -> open_block(Node);
+			sidebar_block -> sidebar_block(Node);
+			quote_block -> quote_block(Node);
+			example_block -> example_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);
 			comment_line -> comment_line(Node);
+			comment_block -> [];
+			attribute_entry -> [];
 			_ -> ast_error({unknown_type, Node})
 		end
 	catch C:E:S ->
@@ -115,14 +185,67 @@ id_from_title(Title) ->
 paragraph({paragraph, _, Text, _}) ->
 	["<p>", inline(Text), "</p>\n"].
 
+%% Admonition paragraphs.
+
+admonition({admonition, Attrs=#{style := Style}, Text, _}) ->
+	Class = string:to_lower(binary_to_list(Style)),
+	[
+		"<div class=\"admonitionblock ", Class, "\">",
+		"<div class=\"title\">", admonition_label(Style), "</div>\n",
+		"<div class=\"content\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		admonition_body(Text),
+		"</div></div>\n"
+	].
+
+%% A paragraph admonition is text. An open-block admonition
+%% is a list of blocks. Inline nodes are not blocks.
+admonition_body(AST=[{Type, _, _, _}|_])
+		when Type =/= link, Type =/= xref, Type =/= emphasized,
+			Type =/= strong, Type =/= inline_literal_passthrough,
+			Type =/= superscript, Type =/= subscript,
+			Type =/= monospaced, Type =/= passthrough,
+			Type =/= line_break ->
+	ast(AST);
+admonition_body(Text) ->
+	inline(Text).
+
+admonition_label(<<C, Rest/bits>>) ->
+	[string:to_upper([C]), string:to_lower(binary_to_list(Rest))].
+
+%% Literal paragraphs and delimited literal blocks.
+
+literal_paragraph({Type, Attrs, Text, _})
+		when Type =:= literal_paragraph; Type =:= literal_block ->
+	[
+		"<div class=\"literalblock\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		"<div class=\"content\"><pre>", html_encode(Text), "</pre></div></div>\n"
+	].
+
 %% Listing blocks.
 
 listing_block({listing_block, Attrs, Listing0, _}) ->
 	Listing = case Attrs of
 		#{1 := <<"source">>, 2 := _} ->
-			try asciideck_source_highlight:filter(Listing0, Attrs) catch C:E:S -> io:format("~p ~p ~p~n", [C, E, S]), exit(bad) end;
+			case asciideck_source_highlight:filter(Listing0, Attrs) of
+				{ok, Highlighted} ->
+					Highlighted;
+				error ->
+					verbatim_listing(Listing0)
+			end;
 		_ ->
-			["<pre>", html_encode(Listing0), "</pre>"]
+			verbatim_listing(Listing0)
 	end,
 	[
 		"<div class=\"listingblock\">",
@@ -137,10 +260,148 @@ listing_block({listing_block, Attrs, Listing0, _}) ->
 		"</div></div>\n"
 	].
 
+verbatim_listing(Listing) ->
+	["<pre>", html_encode(Listing), "</pre>"].
+
 %% Passthrough blocks.
 
 passthrough_block({passthrough_block, _, HTML, _}) ->
 	HTML.
+
+%% Sidebar blocks. The title sits inside the content.
+sidebar_block({sidebar_block, Attrs, Children, _}) ->
+	[
+		"<div class=\"sidebarblock\">",
+		"<div class=\"content\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		ast(Children),
+		"</div></div>\n"
+	].
+
+%% Quote and verse blocks. The title sits before the body.
+%% Attribution is positional attributes 2 and 3.
+
+quote_block({quote_block, Attrs, Body, _}) ->
+	case quote_style(Attrs) of
+		<<"verse">> ->
+			[
+				"<div class=\"verseblock\">\n",
+				block_title(Attrs),
+				"<pre class=\"content\">", inline(Body), "</pre>\n",
+				attribution(Attrs),
+				"</div>\n"
+			];
+		_ ->
+			[
+				"<div class=\"quoteblock\">\n",
+				block_title(Attrs),
+				"<div class=\"content\">\n",
+				ast(Body),
+				"</div>\n",
+				attribution(Attrs),
+				"</div>\n"
+			]
+	end.
+
+block_title(#{<<"title">> := Title}) ->
+	["<div class=\"title\">", inline(Title), "</div>\n"];
+block_title(_) ->
+	[].
+
+attribution(Attrs) ->
+	[
+		"<div class=\"attribution\">\n",
+		attribution_body(quote_value(Attrs, 3, <<"citetitle">>),
+			quote_value(Attrs, 2, <<"attribution">>)),
+		"</div>\n"
+	].
+
+attribution_body(none, none) ->
+	[];
+attribution_body(Cite, none) ->
+	["<em>", inline(Cite), "</em>\n"];
+attribution_body(none, Author) ->
+	["&#8212; ", inline(Author), "\n"];
+attribution_body(Cite, Author) ->
+	["<em>", inline(Cite), "</em><br />\n&#8212; ", inline(Author), "\n"].
+
+%% Positional attribute 1 is the style when that key was written.
+%% Otherwise the named style attribute is. The default is quote.
+quote_style(Attrs) ->
+	case maps:is_key(1, Attrs) of
+		true ->
+			maps:get(1, Attrs);
+		false ->
+			maps:get(<<"style">>, Attrs, <<"quote">>)
+	end.
+
+%% A positional attribute is written over a named one.
+%% An empty positional value is absent. Named is used
+%% only when that position was not in the list.
+quote_value(Attrs, Pos, Name) ->
+	case maps:is_key(Pos, Attrs) of
+		true ->
+			case maps:get(Pos, Attrs) of
+				<<>> -> none;
+				Value -> Value
+			end;
+		false ->
+			case maps:get(Name, Attrs, <<>>) of
+				<<>> -> none;
+				Value -> Value
+			end
+	end.
+
+%% Example blocks. The title sits before the body.
+%% A caption prefixes that title. It is not a title alone.
+%% Examples are not numbered.
+example_block({example_block, Attrs, Children, _}) ->
+	[
+		"<div class=\"exampleblock\">\n",
+		example_title(Attrs),
+		"<div class=\"content\">\n",
+		ast(Children),
+		"</div></div>\n"
+	].
+
+example_title(#{<<"title">> := Title}=Attrs) ->
+	["<div class=\"title\">", inline(example_caption(Attrs)),
+		inline(Title), "</div>\n"];
+example_title(_) ->
+	[].
+
+%% The caption attribute includes any separator it wants.
+example_caption(#{<<"caption">> := Caption}) when Caption =/= <<>> ->
+	Caption;
+example_caption(_) ->
+	<<>>.
+
+%% Open blocks.
+
+open_block({open_block, Attrs, Children, _}) ->
+	Class = case Attrs of
+		#{1 := Style} ->
+			["openblock ", string:to_lower(binary_to_list(Style))];
+		_ ->
+			"openblock"
+	end,
+	[
+		"<div class=\"", Class, "\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		"<div class=\"content\">",
+		ast(Children),
+		"</div></div>\n"
+	].
 
 %% Lists.
 
@@ -149,7 +410,9 @@ list({list, #{type := bulleted}, Items, _}) ->
 list({list, #{type := numbered}, Items, _}) ->
 	["<ol>", fold(Items, fun list_item/1), "</ol>\n"];
 list({list, #{type := labeled}, Items, _}) ->
-	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"].
+	["<dl>", fold(Items, fun labeled_list_item/1), "</dl>\n"];
+list({list, #{type := callout}, Items, _}) ->
+	["<div class=\"colist\"><ol>", fold(Items, fun list_item/1), "</ol></div>\n"].
 
 list_item({list_item, _, [{paragraph, _, Text, _}|AST], _}) ->
 	[
@@ -169,39 +432,110 @@ labeled_list_item({list_item, #{label := Label}, AST, _}) ->
 
 %% Tables.
 
+table({table, Attrs, [], _}) ->
+	table_html(Attrs, none);
 table({table, Attrs, [{row, _, Head, _}|Rows], _}) ->
+	table_html(Attrs, {Head, Rows}).
+
+table_html(Attrs, Rows) ->
 	[
 		"<table rules=\"all\" width=\"100%\" frame=\"border\"
 			cellspacing=\"0\" cellpadding=\"4\">\n",
+		colgroup(Attrs),
 		case Attrs of
 			#{<<"title">> := Caption} -> ["<caption>", inline(Caption), "</caption>"];
 			_ -> []
 		end,
-		"<thead><tr>", table_head(Head), "</tr></thead>"
-		"<tbody>", table_body(Rows), "</tbody>"
+		table_sections(Rows),
 		"</table>\n"
 	].
 
+table_sections(none) ->
+	"<tbody></tbody>";
+table_sections({Head, Rows}) ->
+	["<thead><tr>", table_head(Head), "</tr></thead>"
+		"<tbody>", table_body(Rows), "</tbody>"].
+
+colgroup(#{columns := Specs}) when is_list(Specs), Specs =/= [] ->
+	["<colgroup>", [col_tag(Percent) || Percent <- col_percents(Specs)],
+		"</colgroup>\n"];
+colgroup(_) ->
+	[].
+
+col_tag(Percent) ->
+	["<col width=\"", integer_to_binary(Percent), "%\"/>"].
+
+%% A percentage width is already a percentage of the table.
+%% Proportional widths are scaled. A zero total is not divided.
+col_percents(Specs) ->
+	Widths = [maps:get(width, Spec, 1) || Spec <- Specs],
+	Units = [maps:get(width_unit, Spec, proportional) || Spec <- Specs],
+	case lists:all(fun(Unit) -> Unit =:= percent end, Units) of
+		true ->
+			Widths;
+		false ->
+			scale_widths(Widths)
+	end.
+
+scale_widths(Widths) ->
+	case lists:sum(Widths) of
+		0 ->
+			[0 || _ <- Widths];
+		Sum ->
+			[Value * 100 div Sum || Value <- Widths]
+	end.
+
 table_head(Cells) ->
-	[["<th>", table_cell(AST), "</th>\n"]
-		|| {cell, _, AST, _} <- Cells].
+	[[["<th", cell_attrs(Attrs), ">", table_cell(Attrs, AST), "</th>\n"]
+		|| {cell, Attrs, AST, _} <- Cells]].
 
 table_body(Rows) ->
 	[["<tr>", table_body_cells(Cells), "</tr>\n"]
 		|| {row, _, Cells, _} <- Rows].
 
 table_body_cells(Cells) ->
-	[["<td>", table_cell(AST), "</td>\n"]
-		|| {cell, _, AST, _} <- Cells].
+	[[["<td", cell_attrs(Attrs), ">", table_cell(Attrs, AST), "</td>\n"]
+		|| {cell, Attrs, AST, _} <- Cells]].
 
-table_cell(AST0) ->
-	AST = [Node || Node={Type, _, _, _} <- AST0, Type =/= comment_line],
-	case AST of
+cell_attrs(Attrs) ->
+	[
+		span_attr(<<" colspan">>, maps:get(colspan, Attrs, 1)),
+		span_attr(<<" rowspan">>, maps:get(rowspan, Attrs, 1)),
+		align_attr(<<" align">>, maps:get(halign, Attrs, <<"left">>), <<"left">>),
+		align_attr(<<" valign">>, maps:get(valign, Attrs, <<"top">>), <<"top">>)
+	].
+
+span_attr(_, N) when N =< 1 ->
+	[];
+span_attr(Name, N) ->
+	[Name, "=\"", integer_to_binary(N), "\""].
+
+align_attr(_, Value, Value) ->
+	[];
+align_attr(Name, Value, _) ->
+	[Name, "=\"", Value, "\""].
+
+table_cell(Attrs, AST0) ->
+	AST = [Node || Node={Type, _, _, _} <- AST0,
+		Type =/= comment_line, Type =/= comment_block],
+	Body = case AST of
 		[{paragraph, _, Text, _}] ->
 			inline(Text);
 		_ ->
 			ast(AST)
-	end.
+	end,
+	style_wrap(maps:get(style, Attrs, <<"default">>), Body).
+
+style_wrap(<<"strong">>, Body) ->
+	["<strong>", Body, "</strong>"];
+style_wrap(<<"emphasis">>, Body) ->
+	["<em>", Body, "</em>"];
+style_wrap(<<"monospaced">>, Body) ->
+	["<code>", Body, "</code>"];
+style_wrap(<<"header">>, Body) ->
+	["<strong>", Body, "</strong>"];
+style_wrap(_, Body) ->
+	Body.
 
 %% Block macros.
 
@@ -230,6 +564,15 @@ inline({strong, _, Text, _}) ->
 	["<strong>", inline(Text), "</strong>"];
 inline({inline_literal_passthrough, _, Text, _}) ->
 	["<code>", inline(Text), "</code>"];
+inline({superscript, _, Text, _}) ->
+	["<sup>", inline(Text), "</sup>"];
+inline({subscript, _, Text, _}) ->
+	["<sub>", inline(Text), "</sub>"];
+inline({monospaced, _, Text, _}) ->
+	["<code>", inline(Text), "</code>"];
+%% +++passthrough+++ is copied through with no substitutions.
+inline({passthrough, _, Text, _}) ->
+	Text;
 inline({line_break, _, _, _}) ->
 	"<br/>";
 inline(Text) when is_list(Text) ->
@@ -244,3 +587,1104 @@ html_encode(Text) ->
 		$' -> <<"&apos;">>;
 		_ -> <<C/utf8>>
 	end || <<C/utf8>> <= Text>>.
+
+-ifdef(TEST).
+admonition_test() ->
+	AST = [{admonition, #{style => <<"NOTE">>}, <<"Be careful.">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">Be careful.</div></div>\n">> = HTML,
+	ok.
+
+callout_list_test() ->
+	AST = [{list, #{type => callout}, [
+		{list_item, #{type => callout, number => 1},
+			[{paragraph, #{}, <<"First.">>, #{line => 1}}], #{line => 1}}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"colist\"><ol><li>First.\n</li>\n</ol></div>\n">> = HTML,
+	ok.
+
+open_block_test() ->
+	AST = [{open_block, #{}, [
+		{paragraph, #{}, <<"Hello!">>, #{line => 2}}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"openblock\"><div class=\"content\">"
+		"<p>Hello!</p>\n"
+		"</div></div>\n">> = HTML,
+	ok.
+
+sidebar_block_test() ->
+	AST = [{sidebar_block, #{<<"title">> => <<"An Example Sidebar">>}, [
+		{paragraph, #{}, <<"Outside the narrative.">>, #{line => 2}}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"sidebarblock\"><div class=\"content\">"
+		"<div class=\"title\">An Example Sidebar</div>\n"
+		"<p>Outside the narrative.</p>\n"
+		"</div></div>\n">> = HTML,
+	ok.
+
+attribute_entry_test() ->
+	AST = [
+		{attribute_entry, #{name => <<"author">>, unset => false},
+			<<"Loic">>, #{line => 1}},
+		{paragraph, #{}, <<"Hello.">>, #{line => 2}}
+	],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>Hello.</p>\n">> = HTML,
+	ok.
+
+literal_paragraph_test() ->
+	AST = [{literal_paragraph, #{<<"subs">> => <<"verbatim">>},
+		<<"Hello *world*!">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"literalblock\">"
+		"<div class=\"content\"><pre>Hello *world*!</pre></div></div>\n">> = HTML,
+	ok.
+
+admonition_title_test() ->
+	AST = [{admonition, #{
+		style => <<"WARNING">>,
+		<<"title">> => <<"Watch out">>
+	}, <<"Be careful.">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock warning\">"
+		"<div class=\"title\">Warning</div>\n"
+		"<div class=\"content\">"
+		"<div class=\"title\">Watch out</div>\n"
+		"Be careful.</div></div>\n">> = HTML,
+	ok.
+
+passthrough_test() ->
+	AST = asciideck:parse("+++<b>raw</b>+++"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p><b>raw</b></p>\n">> = HTML,
+	Nested = asciideck:parse("see ++code +++<b>raw</b>+++ more++ please"),
+	NestedHTML = iolist_to_binary(translate(Nested, #{no_header_footer => true})),
+	<<"<p>see <code>code <b>raw</b> more</code> please</p>\n">> = NestedHTML,
+	Shield = asciideck:parse("*bold +++*not*+++ more*"),
+	ShieldHTML = iolist_to_binary(translate(Shield, #{no_header_footer => true})),
+	<<"<p><strong>bold *not* more</strong></p>\n">> = ShieldHTML,
+	Mono = asciideck:parse("++ *bold +++*x*+++ more ++"),
+	MonoHTML = iolist_to_binary(translate(Mono, #{no_header_footer => true})),
+	<<"<p><code> *bold *x* more </code></p>\n">> = MonoHTML,
+	Tick = asciideck:parse("`tick +++`in`+++ here`"),
+	TickHTML = iolist_to_binary(translate(Tick, #{no_header_footer => true})),
+	<<"<p><code>tick `in` here</code></p>\n">> = TickHTML,
+	Sup = asciideck:parse("^out +++^in^+++ tail^"),
+	SupHTML = iolist_to_binary(translate(Sup, #{no_header_footer => true})),
+	<<"<p><sup>out ^in^ tail</sup></p>\n">> = SupHTML,
+	ok.
+
+monospaced_test() ->
+	AST = [{paragraph, #{}, [
+		<<"Use ">>,
+		{monospaced, #{}, <<"ok">>, inline},
+		<<".">>
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>Use <code>ok</code>.</p>\n">> = HTML,
+	Code = asciideck:parse("Use +lists:reverse/1+."),
+	CodeHTML = iolist_to_binary(translate(Code, #{no_header_footer => true})),
+	<<"<p>Use <code>lists:reverse/1</code>.</p>\n">> = CodeHTML,
+	Literal = asciideck:parse("See +x+y here."),
+	LiteralHTML = iolist_to_binary(translate(Literal, #{no_header_footer => true})),
+	<<"<p>See +x+y here.</p>\n">> = LiteralHTML,
+	ok.
+
+super_sub_test() ->
+	AST = [{paragraph, #{}, [
+		<<"H">>,
+		{subscript, #{}, <<"2">>, inline},
+		<<"O and x">>,
+		{superscript, #{}, <<"10">>, inline}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>H<sub>2</sub>O and x<sup>10</sup></p>\n">> = HTML,
+	ok.
+
+admonition_inline_test() ->
+	AST = [{admonition, #{style => <<"NOTE">>}, [
+		<<"Be ">>,
+		{strong, #{}, <<"bold">>, inline},
+		<<".">>
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">Be <strong>bold</strong>.</div></div>\n">> = HTML,
+	ok.
+
+open_listing_test() ->
+	AST = asciideck:parse(
+		"[listing]\n"
+		"--\n"
+		"f() -> ok.\n"
+		"--\n"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"listingblock\">"
+		"<div class=\"content\">"
+		"<pre>f() -&gt; ok.</pre>"
+		"</div></div>\n">> = HTML,
+	ok.
+
+source_highlight_fallback_test() ->
+	AST = [{listing_block, #{
+		1 => <<"source">>,
+		2 => <<"erlang;touch /tmp/x">>
+	}, <<"a < b">>, #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"listingblock\">"
+		"<div class=\"content\">"
+		"<pre>a &lt; b</pre>"
+		"</div></div>\n">> = HTML,
+	ok.
+
+open_note_test() ->
+	AST = asciideck:parse(
+		"[NOTE]\n"
+		"--\n"
+		"Hello *bold*.\n"
+		"\n"
+		"* One.\n"
+		"--\n"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">"
+		"<p>Hello <strong>bold</strong>.</p>\n"
+		"<ul><li>One.\n</li>\n</ul>\n"
+		"</div></div>\n">> = HTML,
+	ok.
+
+quote_block_test() ->
+	Plain = asciideck:parse(
+		"____\n"
+		"Hello *world*.\n"
+		"\n"
+		"Second.\n"
+		"____\n"),
+	PlainHTML = iolist_to_binary(translate(Plain, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Hello <strong>world</strong>.</p>\n"
+		"<p>Second.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = PlainHTML,
+	Both = asciideck:parse(
+		".My Quote\n"
+		"[quote, Ann, Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	BothHTML = iolist_to_binary(translate(Both, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"title\">My Quote</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = BothHTML,
+	Author = asciideck:parse(
+		"[quote, Ann]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	AuthorHTML = iolist_to_binary(translate(Author, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = AuthorHTML,
+	Cite = asciideck:parse(
+		"[quote, , The Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	CiteHTML = iolist_to_binary(translate(Cite, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>The Book</em>\n"
+		"</div>\n"
+		"</div>\n">> = CiteHTML,
+	Encoded = asciideck:parse(
+		"[quote, A & B, <Book>]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	EncodedHTML = iolist_to_binary(translate(Encoded, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>&lt;Book&gt;</em><br />\n"
+		"&#8212; A &amp; B\n"
+		"</div>\n"
+		"</div>\n">> = EncodedHTML,
+	List = asciideck:parse(
+		"____\n"
+		"* One\n"
+		"____\n"),
+	ListHTML = iolist_to_binary(translate(List, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<ul><li>One\n</li>\n</ul>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = ListHTML,
+	%% A positional value is written over the same named attribute.
+	Pos = asciideck:parse(
+		"[quote, Ann, Book, attribution=\"Other\", citetitle=\"Other Book\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	PosHTML = iolist_to_binary(translate(Pos, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = PosHTML,
+	Named = asciideck:parse(
+		"[attribution=\"Someone\", citetitle=\"Work\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	NamedHTML = iolist_to_binary(translate(Named, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Work</em><br />\n"
+		"&#8212; Someone\n"
+		"</div>\n"
+		"</div>\n">> = NamedHTML,
+	%% An empty positional value is absent, even when the name is set.
+	EmptyPos = asciideck:parse(
+		"[quote, , , attribution=\"Ann\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	EmptyHTML = iolist_to_binary(translate(EmptyPos, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = EmptyHTML,
+	%% A comment does not take the attribution.
+	Commented = asciideck:parse(
+		"[quote, Ann, Book]\n"
+		"// c\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	CommentedHTML = iolist_to_binary(translate(Commented, #{no_header_footer => true})),
+	<<"<!-- c-->\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = CommentedHTML,
+	%% A positional style wins over a later named style.
+	PosStyle = asciideck:parse(
+		"[quote, Ann, Book]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	PosStyleHTML = iolist_to_binary(translate(PosStyle, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>one two</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = PosStyleHTML,
+	%% An empty positional author does not clear a later named one.
+	LaterAnn = asciideck:parse(
+		"[quote, , Book]\n"
+		"[attribution=\"Ann\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	LaterAnnHTML = iolist_to_binary(translate(LaterAnn, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = LaterAnnHTML,
+	EarlierAnn = asciideck:parse(
+		"[attribution=\"Ann\", citetitle=\"Work\"]\n"
+		"[quote, , Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	EarlierAnnHTML = iolist_to_binary(translate(EarlierAnn, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = EarlierAnnHTML,
+	LaterCite = asciideck:parse(
+		"[quote, Ann,]\n"
+		"[citetitle=\"Book\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	LaterCiteHTML = iolist_to_binary(translate(LaterCite, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = LaterCiteHTML,
+	%% A literal delimiter does not let a verse style swallow the quote.
+	Lit = asciideck:parse(
+		"[verse]\n"
+		"....\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n"),
+	LitHTML = iolist_to_binary(translate(Lit, #{no_header_footer => true})),
+	<<"<div class=\"literalblock\">"
+		"<div class=\"content\"><pre></pre></div></div>\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>line</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = LitHTML,
+	InnerVerse = asciideck:parse(
+		"....\n"
+		"[verse]\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n"),
+	InnerVerseHTML = iolist_to_binary(translate(InnerVerse, #{no_header_footer => true})),
+	<<"<div class=\"literalblock\">"
+		"<div class=\"content\"><pre>[verse]</pre></div></div>\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>line</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = InnerVerseHTML,
+	%% A rejected attribute list is a paragraph. The delimiter still opens.
+	Bad = asciideck:parse(
+		"[quote, \"Ann]\n"
+		"____\n"
+		"hello malformed\n"
+		"____\n"),
+	BadHTML = iolist_to_binary(translate(Bad, #{no_header_footer => true})),
+	<<"<p>[quote, &quot;Ann]</p>\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello malformed</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = BadHTML,
+	ok.
+
+verse_block_test() ->
+	AST = asciideck:parse(
+		".Verse Title\n"
+		"[verse, Ann, Book]\n"
+		"____\n"
+		"To *see* a world\n"
+		"And a heaven\n"
+		"\n"
+		"Hold infinity.\n"
+		"____\n"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<div class=\"title\">Verse Title</div>\n"
+		"<pre class=\"content\">To <strong>see</strong> a world\n"
+		"And a heaven\n"
+		"\n"
+		"Hold infinity.</pre>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = HTML,
+	Cross = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"*bold\n"
+		"still*\n"
+		"____\n"),
+	CrossHTML = iolist_to_binary(translate(Cross, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\"><strong>bold\n"
+		"still</strong></pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = CrossHTML,
+	Meta = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"\n"
+		".Title\n"
+		"____\n"
+		"after\n"),
+	MetaHTML = iolist_to_binary(translate(Meta, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">line\n"
+		"\n"
+		".Title</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n"
+		"<p>after</p>\n">> = MetaHTML,
+	Break = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"one +\n"
+		"two\n"
+		"____\n"),
+	BreakHTML = iolist_to_binary(translate(Break, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one<br/>\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = BreakHTML,
+	%% The first underscore line ends the verse. Later lines are not verse text.
+	Inner = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n"),
+	InnerHTML = iolist_to_binary(translate(Inner, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">intro\n"
+		"\n"
+		"----</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n",
+		_/bits>> = InnerHTML,
+	%% A comment between the style and the delimiter stays a verse.
+	Comment = asciideck:parse(
+		"[verse]\n"
+		"// comment\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	CommentHTML = iolist_to_binary(translate(Comment, #{no_header_footer => true})),
+	<<"<!-- comment-->\n"
+		"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = CommentHTML,
+	EmptyPos = asciideck:parse(
+		"[verse]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	EmptyPosHTML = iolist_to_binary(translate(EmptyPos, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = EmptyPosHTML,
+	Named = asciideck:parse(
+		"[style=\"verse\", attribution=\"Ann\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	NamedHTML = iolist_to_binary(translate(Named, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = NamedHTML,
+	Closest = asciideck:parse(
+		"[style=\"quote\"]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	ClosestHTML = iolist_to_binary(translate(Closest, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = ClosestHTML,
+	%% A continued attribute entry does not keep the verse open.
+	Cont = asciideck:parse(
+		"[verse]\n"
+		":description: hello +\n"
+		"continued\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n"),
+	ContHTML = iolist_to_binary(translate(Cont, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">intro\n"
+		"\n"
+		"----</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n",
+		_/bits>> = ContHTML,
+	ok.
+
+example_block_test() ->
+	Plain = asciideck:parse(
+		"====\n"
+		"Hello *world*.\n"
+		"\n"
+		"Second.\n"
+		"====\n"),
+	PlainHTML = iolist_to_binary(translate(Plain, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Hello <strong>world</strong>.</p>\n"
+		"<p>Second.</p>\n"
+		"</div></div>\n">> = PlainHTML,
+	Titled = asciideck:parse(
+		".An example\n"
+		"====\n"
+		"Qui in magna commodo, est labitur dolorum an. Est ne magna primis\n"
+		"adolescens.\n"
+		"====\n"),
+	TitledHTML = iolist_to_binary(translate(Titled, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">An example</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Qui in magna commodo, est labitur dolorum an. "
+			"Est ne magna primis adolescens.</p>\n"
+		"</div></div>\n">> = TitledHTML,
+	Caption = asciideck:parse(
+		"[caption=\"Example 1: \"]\n"
+		".An example with a custom caption\n"
+		"====\n"
+		"Words.\n"
+		"====\n"),
+	CaptionHTML = iolist_to_binary(translate(Caption, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">Example 1: An example with a custom caption</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = CaptionHTML,
+	CaptionOnly = asciideck:parse(
+		"[caption=\"Example 1: \"]\n"
+		"====\n"
+		"Words.\n"
+		"====\n"),
+	CaptionOnlyHTML = iolist_to_binary(translate(CaptionOnly,
+		#{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = CaptionOnlyHTML,
+	Encoded = translate([{example_block, #{
+		<<"caption">> => <<"A & B: ">>,
+		<<"title">> => <<"<x>">>
+	}, [
+		{paragraph, #{}, <<"Words.">>, #{line => 1}}
+	], #{line => 1}}], #{no_header_footer => true}),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">A &amp; B: &lt;x&gt;</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = iolist_to_binary(Encoded),
+	EmptyCap = translate([{example_block, #{
+		<<"caption">> => <<>>,
+		<<"title">> => <<"An example">>
+	}, [
+		{paragraph, #{}, <<"Words.">>, #{line => 1}}
+	], #{line => 1}}], #{no_header_footer => true}),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">An example</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div></div>\n">> = iolist_to_binary(EmptyCap),
+	Role = asciideck:parse(
+		"[role=\"x\"]\n"
+		"====\n"
+		"hello\n"
+		"====\n"),
+	RoleHTML = iolist_to_binary(translate(Role, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello</p>\n"
+		"</div></div>\n">> = RoleHTML,
+	Listed = asciideck:parse(
+		"====\n"
+		"* One.\n"
+		"====\n"),
+	ListedHTML = iolist_to_binary(translate(Listed, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<ul><li>One.\n</li>\n</ul>\n"
+		"</div></div>\n">> = ListedHTML,
+	Listing = asciideck:parse(
+		"====\n"
+		"Intro paragraph is long enough.\n"
+		"\n"
+		"----\n"
+		"====\n"
+		"code\n"
+		"----\n"
+		"====\n"),
+	ListingHTML = iolist_to_binary(translate(Listing, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Intro paragraph is long enough.</p>\n"
+		"<div class=\"listingblock\">"
+		"<div class=\"content\">"
+		"<pre>====\ncode</pre>"
+		"</div></div>\n"
+		"</div></div>\n">> = ListingHTML,
+	Dropped = asciideck:parse(
+		"====\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"====\n"),
+	DroppedHTML = iolist_to_binary(translate(Dropped, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>before</p>\n"
+		"<p>after</p>\n"
+		"</div></div>\n">> = DroppedHTML,
+	Side = asciideck:parse(
+		"====\n"
+		"before\n"
+		"\n"
+		"****\n"
+		"side\n"
+		"****\n"
+		"\n"
+		"after\n"
+		"====\n"),
+	SideHTML = iolist_to_binary(translate(Side, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>before</p>\n"
+		"<div class=\"sidebarblock\"><div class=\"content\">"
+		"<p>side</p>\n"
+		"</div></div>\n"
+		"<p>after</p>\n"
+		"</div></div>\n">> = SideHTML,
+	Note = asciideck:parse(
+		"[NOTE]\n"
+		".A NOTE admonition block\n"
+		"====\n"
+		"Hello *bold*.\n"
+		"\n"
+		"* One.\n"
+		"====\n"),
+	NoteHTML = iolist_to_binary(translate(Note, #{no_header_footer => true})),
+	<<"<div class=\"admonitionblock note\">"
+		"<div class=\"title\">Note</div>\n"
+		"<div class=\"content\">"
+		"<div class=\"title\">A NOTE admonition block</div>\n"
+		"<p>Hello <strong>bold</strong>.</p>\n"
+		"<ul><li>One.\n</li>\n</ul>\n"
+		"</div></div>\n">> = NoteHTML,
+	Nested = asciideck:parse(
+		"====\n"
+		"outer\n"
+		"\n"
+		"====\n"
+		"inner\n"
+		"====\n"
+		"====\n"),
+	NestedHTML = iolist_to_binary(translate(Nested, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>outer</p>\n"
+		"</div></div>\n"
+		"<p>inner</p>\n"
+		"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"</div></div>\n">> = NestedHTML,
+	Empty = asciideck:parse(
+		"====\n"
+		"====\n"
+		"after\n"),
+	EmptyHTML = iolist_to_binary(translate(Empty, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"</div></div>\n"
+		"<p>after</p>\n">> = EmptyHTML,
+	NestedTitle = asciideck:parse(
+		"====\n"
+		"____\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		"____\n"
+		"====\n"
+		"====\n"
+		"body\n"
+		"====\n"),
+	NestedTitleHTML = iolist_to_binary(translate(NestedTitle,
+		#{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n"
+		"</div></div>\n"
+		"<div class=\"exampleblock\">\n"
+		"<div class=\"title\">Title</div>\n"
+		"<div class=\"content\">\n"
+		"<p>body</p>\n"
+		"</div></div>\n">> = NestedTitleHTML,
+	Spaced = asciideck:parse(
+		"==== \n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"====\n"),
+	SpacedHTML = iolist_to_binary(translate(Spaced, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello there friend</p>\n"
+		"</div></div>\n">> = SpacedHTML,
+	TrailComment = asciideck:parse(
+		"====\n"
+		"hello there friend\n"
+		"\n"
+		".Title\n"
+		"// c\n"
+		"\n"
+		"====\n"
+		"after the example here\n"),
+	TrailCommentHTML = iolist_to_binary(translate(TrailComment,
+		#{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello there friend</p>\n"
+		"<!-- c-->\n"
+		"</div></div>\n"
+		"<p>after the example here</p>\n">> = TrailCommentHTML,
+	Trail = asciideck:parse(
+		"====\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		":foo: bar\n"
+		"[role=\"x\"]\n"
+		"====\n"
+		"after\n"),
+	TrailHTML = iolist_to_binary(translate(Trail, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello</p>\n"
+		"</div></div>\n"
+		"<p>after</p>\n">> = TrailHTML,
+	ok.
+
+%% User Guide 16.5. The block stays in the AST and is not written.
+comment_block_test() ->
+	AST = asciideck:parse(
+		"Before.\n"
+		"\n"
+		"////\n"
+		"hidden *stars*\n"
+		"////\n"
+		"\n"
+		"After.\n"),
+	[{paragraph, _, <<"Before.">>, _},
+		{comment_block, _, <<"hidden *stars*">>, _},
+		{paragraph, _, <<"After.">>, _}] = AST,
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>Before.</p>\n"
+		"<p>After.</p>\n">> = HTML,
+	Nested = asciideck:parse(
+		"====\n"
+		"visible\n"
+		"\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"\n"
+		"after\n"
+		"====\n"),
+	[{example_block, _, [
+		{paragraph, _, <<"visible">>, _},
+		{comment_block, _, <<"hidden">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = Nested,
+	NestedHTML = iolist_to_binary(translate(Nested, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>visible</p>\n"
+		"<p>after</p>\n"
+		"</div></div>\n">> = NestedHTML,
+	%% A comment in a cell is not written, and the cell stays one paragraph.
+	Table = asciideck:parse(
+		"|===\n"
+		"|A |B\n"
+		"|C\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"|D\n"
+		"|===\n"),
+	[{table, _, [
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"A">>, _}], _},
+			{cell, _, [{paragraph, _, <<"B">>, _}], _}
+		], _},
+		{row, _, [
+			{cell, _, [
+				{paragraph, _, <<"C">>, _},
+				{comment_block, _, <<"hidden">>, _}
+			], _},
+			{cell, _, [{paragraph, _, <<"D">>, _}], _}
+		], _}
+	], _}] = Table,
+	TableHTML = iolist_to_binary(translate(Table, #{no_header_footer => true})),
+	<<"<table rules=\"all\" width=\"100%\" frame=\"border\"\n"
+		"			cellspacing=\"0\" cellpadding=\"4\">\n"
+		"<thead><tr><th>A</th>\n"
+		"<th>B</th>\n"
+		"</tr></thead><tbody><tr><td>C</td>\n"
+		"<td>D</td>\n"
+		"</tr>\n"
+		"</tbody></table>\n">> = TableHTML,
+	Span = asciideck:parse(
+		"[cols=\"e,m,^,>s\"]\n"
+		"|===\n"
+		"|1 >s|2 |3 |4\n"
+		"^|5 2.2+^.^|6 .3+<.>m|7\n"
+		"^|8\n"
+		"|9 2+>|10\n"
+		"|===\n"),
+	SpanHTML = iolist_to_binary(translate(Span, #{no_header_footer => true})),
+	<<"<table rules=\"all\" width=\"100%\" frame=\"border\"\n"
+		"			cellspacing=\"0\" cellpadding=\"4\">\n"
+		"<colgroup><col width=\"25%\"/><col width=\"25%\"/>"
+		"<col width=\"25%\"/><col width=\"25%\"/></colgroup>\n"
+		"<thead><tr><th><em>1</em></th>\n"
+		"<th align=\"right\"><strong>2</strong></th>\n"
+		"<th align=\"center\">3</th>\n"
+		"<th align=\"right\"><strong>4</strong></th>\n"
+		"</tr></thead><tbody><tr>"
+		"<td align=\"center\"><em>5</em></td>\n"
+		"<td colspan=\"2\" rowspan=\"2\" align=\"center\" valign=\"middle\">"
+		"<code>6</code></td>\n"
+		"<td rowspan=\"3\" valign=\"bottom\"><code>7</code></td>\n"
+		"</tr>\n"
+		"<tr><td align=\"center\"><em>8</em></td>\n"
+		"</tr>\n"
+		"<tr><td><em>9</em></td>\n"
+		"<td colspan=\"2\" align=\"right\"><code>10</code></td>\n"
+		"</tr>\n"
+		"</tbody></table>\n">> = SpanHTML,
+	Styles = asciideck:parse(
+		"[cols=\"l,v\"]\n"
+		"|===\n"
+		"|*one*\n"
+		"*two*\n"
+		"\n"
+		"*three* |verse *a*\n"
+		"*b*\n"
+		"|===\n"),
+	StylesHTML = iolist_to_binary(translate(Styles, #{no_header_footer => true})),
+	{_, _} = binary:match(StylesHTML, <<"<div class=\"literalblock\">">>),
+	{_, _} = binary:match(StylesHTML, <<"<pre>*one*\n*two*\n\n*three* ">>),
+	{_, _} = binary:match(StylesHTML, <<"<div class=\"verseblock\">">>),
+	{_, _} = binary:match(StylesHTML, <<"<strong>a</strong>\n<strong>b</strong>">>),
+	nomatch = binary:match(StylesHTML, <<"<strong>one</strong>">>),
+	Percent = asciideck:parse(
+		"[cols=\"20%,20%\"]\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"),
+	PercentHTML = iolist_to_binary(translate(Percent, #{no_header_footer => true})),
+	{_, _} = binary:match(PercentHTML,
+		<<"<col width=\"20%\"/><col width=\"20%\"/>">>),
+	Short = asciideck:parse(
+		"[cols=\"3\"]\n"
+		"|===\n"
+		"|only |two\n"
+		"|===\n"),
+	ShortHTML = iolist_to_binary(translate(Short, #{no_header_footer => true})),
+	{_, _} = binary:match(ShortHTML, <<"<col width=\"33%\"/>">>),
+	{_, _} = binary:match(ShortHTML, <<"<tbody></tbody>">>),
+	nomatch = binary:match(ShortHTML, <<"only">>),
+	Zero = asciideck:parse(
+		"[cols=\"0,0\"]\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"),
+	ZeroHTML = iolist_to_binary(translate(Zero, #{no_header_footer => true})),
+	{_, _} = binary:match(ZeroHTML, <<"<col width=\"0%\"/><col width=\"0%\"/>">>),
+	ok.
+
+%% The HTML title element is the document title. AsciiDoc User Guide,
+%% Header: a title attribute entry in the header replaces it.
+
+html_page(Data) ->
+	iolist_to_binary(translate(asciideck:parse(Data), #{})).
+
+html_title_test() ->
+	Titled = html_page(<<"= Tom & Jerry's <show>\n\nHello.\n">>),
+	{_, _} = binary:match(Titled,
+		<<"<title>Tom &amp; Jerry&apos;s &lt;show&gt;</title>">>),
+	nomatch = binary:match(Titled, <<"TODO title">>),
+	{_, _} = binary:match(Titled, <<"<h1 id=\"_tom___jerry_s__show\">">>),
+	Marked = html_page(<<"= Hello *world*\n\nX.\n">>),
+	{_, _} = binary:match(Marked, <<"<title>Hello <strong>world</strong></title>">>),
+	Bare = html_page(<<"Hello.\n">>),
+	{_, _} = binary:match(Bare, <<"<title></title>">>),
+	Section = html_page(<<"== Section Title\n\nHello.\n">>),
+	{_, _} = binary:match(Section, <<"<title></title>">>),
+	Later = html_page(<<"Hello.\n\n= Not The Document\n\nX.\n">>),
+	{_, _} = binary:match(Later, <<"<title></title>">>),
+	{_, _} = binary:match(Later, <<"Not The Document">>),
+	NoShell = iolist_to_binary(translate(
+		asciideck:parse(<<"= Title\n\nHi.\n">>),
+		#{no_header_footer => true})),
+	nomatch = binary:match(NoShell, <<"<title>">>),
+	Commented = html_page(<<"// note\n= After Comment\n\nX.\n">>),
+	{_, _} = binary:match(Commented, <<"<title>After Comment</title>">>),
+	Hidden = html_page(<<
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"= After Block\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Hidden, <<"<title>After Block</title>">>),
+	ok.
+
+html_title_attribute_test() ->
+	Override = html_page(<<
+		":title: Hello *world* & <tag>\n"
+		"= Document Title\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Override,
+		<<"<title>Hello *world* &amp; &lt;tag&gt;</title>">>),
+	{_, _} = binary:match(Override, <<"<h1 id=\"_document_title\">Document Title</h1>">>),
+	Empty = html_page(<<":title:\n= Document Title\n\nX.\n">>),
+	{_, _} = binary:match(Empty, <<"<title></title>">>),
+	Unset = html_page(<<
+		":title: SEO\n"
+		":title!:\n"
+		"= Document Title\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Unset, <<"<title>Document Title</title>">>),
+	Late = html_page(<<
+		"= Document Title\n"
+		"\n"
+		":title: Late\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Late, <<"<title>Document Title</title>">>),
+	AfterPara = html_page(<<"Hello.\n\n:title: Nope\n">>),
+	{_, _} = binary:match(AfterPara, <<"<title></title>">>),
+	BeforePara = html_page(<<":title: Yep\n\nHello.\n">>),
+	{_, _} = binary:match(BeforePara, <<"<title>Yep</title>">>),
+	Author = html_page(<<":author: Joe\n= Document Title\n\nX.\n">>),
+	{_, _} = binary:match(Author, <<"<title>Document Title</title>">>),
+	Both = html_page(<<":author: Joe\n:title: SEO\n= Document Title\n\nX.\n">>),
+	{_, _} = binary:match(Both, <<"<title>SEO</title>">>),
+	ok.
+
+%% +++passthrough+++ is raw in the body. Inside <title> it is text,
+%% so a closing title tag in the document title cannot break out.
+
+html_title_passthrough_test() ->
+	Escaped = <<"&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;">>,
+	Break = html_page(<<"= Hello +++</title><script>alert(1)</script>+++\n\nX.\n">>),
+	{_, _} = binary:match(Break, <<"<title>Hello ", Escaped/binary, "</title>">>),
+	Upper = html_page(<<"= Hello +++</TITLE><script>alert(1)</script>+++\n\nX.\n">>),
+	{_, _} = binary:match(Upper,
+		<<"<title>Hello &lt;/TITLE&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>">>),
+	Strong = html_page(<<"= *+++</title><script>alert(1)</script>+++*\n\nX.\n">>),
+	{_, _} = binary:match(Strong,
+		<<"<title><strong>", Escaped/binary, "</strong></title>">>),
+	Code = html_page(<<"= `+++</title><script>alert(1)</script>+++`\n\nX.\n">>),
+	{_, _} = binary:match(Code,
+		<<"<title><code>", Escaped/binary, "</code></title>">>),
+	Body = html_page(<<"= Plain\n\n+++<em>keep</em>+++.\n">>),
+	{_, _} = binary:match(Body, <<"<title>Plain</title>">>),
+	{_, _} = binary:match(Body, <<"<p><em>keep</em>.</p>\n">>),
+	ok.
+-endif.

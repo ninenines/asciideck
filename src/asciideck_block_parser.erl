@@ -26,6 +26,7 @@
 -module(asciideck_block_parser).
 
 -export([parse/1]).
+-export([parse/2]).
 
 %% @todo Temporary export. Move somewhere else.
 -export([trim/1]).
@@ -35,7 +36,11 @@
 -type ast() :: list(). %% @todo
 
 -record(state, {
-	reader :: pid()
+	reader :: pid(),
+	%% Line number of the line before this reader's first line.
+	%% Zero for a whole document. An open block passes the
+	%% opener line so children keep the file line number.
+	line_offset = 0 :: non_neg_integer()
 }).
 
 -define(IS_WS(C), (C =:= $\s) or (C =:= $\t)).
@@ -53,14 +58,25 @@ define_NOT_test() ->
 
 -spec parse(binary() | pid()) -> ast().
 parse(Data) when is_binary(Data) ->
-	%% @todo Might want to start it supervised.
-	%% @todo Might want to stop it also.
-	{ok, ReaderPid} = asciideck_line_reader:start_link(Data),
-	parse(ReaderPid);
+	parse(Data, 0);
 parse(Data) when is_list(Data) ->
 	parse(iolist_to_binary(Data));
 parse(ReaderPid) when is_pid(ReaderPid) ->
 	blocks(#state{reader=ReaderPid}).
+
+%% Offset is the file line of the line before Data's first line.
+-spec parse(binary(), non_neg_integer()) -> ast().
+parse(Data, Offset) when is_binary(Data), is_integer(Offset), Offset >= 0 ->
+	%% @todo Might want to start it supervised.
+	{ok, ReaderPid} = asciideck_line_reader:start_link(Data),
+	try blocks(#state{reader=ReaderPid, line_offset=Offset})
+	after
+		%% Stay linked while parsing so a caller crash kills the
+		%% reader. Unlink before stopping so a trap_exit caller
+		%% does not see the normal shutdown.
+		unlink(ReaderPid),
+		gen_server:stop(ReaderPid)
+	end.
 
 blocks(St) ->
 	case block(St) of
@@ -76,7 +92,6 @@ block(St) ->
 		fun eof/1,
 		%% Section titles.
 		fun section_title/1,
-		fun long_section_title/1,
 		%% Block macros.
 		fun block_id/1,
 		fun block_macro/1,
@@ -157,7 +172,8 @@ section_title(St) ->
 	end,
 	%% Section titles must be followed by at least one empty line.
 	_ = empty_line(St),
-	%% Good!
+	%% Four or five equals and no text is an example delimiter.
+	true = (Title =/= <<>>) orelse (Level < 3),
 	{section_title, #{level => Level}, Title, Ann}.
 
 -ifdef(TEST).
@@ -195,76 +211,6 @@ section_title_test() ->
 		= parse(<<"= Document Title (level 0) =  ">>),
 	%% A space before the first delimiter is not a title.
 	?NOT(section_title, parse(<<" = Document Title (level 0)">>)),
-	ok.
--endif.
-
-%% Asciidoc User Guide 11.1
-long_section_title(St) ->
-	%% Title must be hard against the left margin.
-	<<C, _/bits>> = Title0 = read_line(St),
-	Ann = ann(St),
-	false = ?IS_WS(C),
-	Title = trim(Title0),
-	%% Read the underline.
-	{Level, Char, Underline0} = case read_line(St) of
-		U = <<"=", _/bits >> -> {0, $=, U};
-		U = <<"-", _/bits >> -> {1, $-, U};
-		U = <<"~", _/bits >> -> {2, $~, U};
-		U = <<"^", _/bits >> -> {3, $^, U};
-		U = <<"+", _/bits >> -> {4, $+, U}
-	end,
-	Underline = trim(Underline0, trailing),
-	%% Underline must be the same character repeated over the entire line.
-	repeats(Underline, Char),
-	%% Underline must be the same size as the title, +/- 2 characters.
-	TLen = byte_size(Title),
-	ULen = byte_size(Underline),
-	true = (TLen >= ULen - 2) andalso (TLen =< ULen + 2),
-	%% Good!
-	{section_title, #{level => Level}, Title, Ann}.
-
--ifdef(TEST).
-long_section_title_test() ->
-	%% Same amount of characters for the underline.
-	[{section_title, #{level := 0}, <<"Document Title (level 0)">>, _}] = parse(<<
-		"Document Title (level 0)\n"
-		"========================">>),
-	[{section_title, #{level := 1}, <<"Section Title (level 1)">>, _}] = parse(<<
-		"Section Title (level 1)\n"
-		"-----------------------">>),
-	[{section_title, #{level := 2}, <<"Section Title (level 2)">>, _}] = parse(<<
-		"Section Title (level 2)\n"
-		"~~~~~~~~~~~~~~~~~~~~~~~">>),
-	[{section_title, #{level := 3}, <<"Section Title (level 3)">>, _}] = parse(<<
-		"Section Title (level 3)\n"
-		"^^^^^^^^^^^^^^^^^^^^^^^">>),
-	[{section_title, #{level := 4}, <<"Section Title (level 4)">>, _}] = parse(<<
-		"Section Title (level 4)\n"
-		"+++++++++++++++++++++++">>),
-	%% A shorter title to confirm we are not cheating.
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"======">>),
-	%% Underline can be +/- 2 characters.
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"====">>),
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"=====">>),
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"=======">>),
-	[{section_title, #{level := 0}, <<"Hello!">>, _}] = parse(<<
-		"Hello!\n"
-		"========">>),
-	%% Underline too short/long results in a different block.
-	?NOT(section_title, parse(<<
-		"Hello!\n"
-		"===">>)),
-	?NOT(section_title, parse(<<
-		"Hello!\n"
-		"=========">>)),
 	ok.
 -endif.
 
@@ -356,12 +302,30 @@ block_macro(St) ->
 	end, Line1),
 	AttrList1 = trim(AttrList0),
 	{attribute_list, AttrList, <<>>, _} = attribute_list(St, AttrList1),
-	%% Block macros must be followed by at least one empty line.
-	_ = empty_line(St),
+	%% User Guide: one line, with a blank line or a block
+	%% delimiter on either side. A delimiter stays for the
+	%% next block. The sidebar closer is one.
+	follow_macro(St),
 	{block_macro, AttrList#{
 		name => Name,
 		target => Target
 	}, <<>>, Ann}.
+
+%% A blank line is consumed. A block delimiter is not.
+follow_macro(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	case read_line(St) of
+		eof ->
+			ok;
+		Line ->
+			case trim(Line) of
+				<<>> ->
+					ok;
+				_ ->
+					asciideck_reader:set_position(ReaderPid, Ln),
+					true = delimited_line(Line)
+			end
+	end.
 
 -ifdef(TEST).
 block_macro_image_test() ->
@@ -378,6 +342,13 @@ block_macro_image_test() ->
 	}, <<>>, _}] = parse(
 		<<"image::images/layout.png[\"J14P main circuit board\", "
 			"title=\"Main circuit board\"]">>),
+	%% A block delimiter can stand in for the blank line.
+	[{block_macro, #{name := <<"image">>, target := <<"logo.png">>}, <<>>, _},
+		{listing_block, _, <<"code">>, _}] = parse(<<
+		"image::logo.png[Logo]\n"
+		"----\n"
+		"code\n"
+		"----\n">>),
 	ok.
 
 block_macro_include_test() ->
@@ -577,13 +548,13 @@ labeled_list_test() ->
 		[{paragraph, _, <<"Answer!">>, _}], _}] = parse(<<"Question:: Answer!">>),
 	[{list_item, #{type := labeled, separator := <<"::">>, label := <<"Question">>},
 		[{paragraph, _, <<"Answer!">>, _}], _}] = parse(<<"Question::\n  Answer!">>),
-	%% Long snippet from the Asciidoc User Guide, minus literal paragraph.
-	%% @todo Add the literal paragraph back once they are implemented.
+	%% Long snippet from the Asciidoc User Guide.
 	[
 		{list_item, #{type := labeled, separator := <<"::">>, label := <<"In">>},
 			[{paragraph, _, <<>>, _}], _},
 		{list_item, #{type := labeled, separator := <<"::">>, label := <<"Lorem">>},
 			[{paragraph, _, <<"Fusce euismod commodo velit.">>, _}], _},
+		{literal_paragraph, _, <<"Fusce euismod commodo velit.">>, _},
 		{list_item, #{type := labeled, separator := <<"::">>, label := <<"Ipsum">>},
 			[{paragraph, _, <<"Vivamus fringilla mi eu lacus.">>, _}], _},
 		{list_item, #{type := bulleted, level := 1},
@@ -606,7 +577,9 @@ labeled_list_test() ->
 		"In::\n"
 		"Lorem::\n"
 		"  Fusce euismod commodo velit.\n"
-		%% @todo Add literal paragraph back here.
+		"\n"
+		"  Fusce euismod commodo velit.\n"
+		"\n"
 		"Ipsum:: Vivamus fringilla mi eu lacus.\n"
 		"  * Vivamus fringilla mi eu lacus.\n"
 		"  * Donec eget arcu bibendum nunc consequat lobortis.\n"
@@ -624,8 +597,70 @@ labeled_list_test() ->
 -endif.
 
 %% Asciidoc User Guide 20
--spec callout_list(_) -> no_return().
-callout_list(St) -> throw({not_implemented, St}). %% @todo
+callout_list(St) ->
+	Line0 = read_line(St),
+	{Number, ListItem} = callout_marker(Line0),
+	list_item(St, #{
+		type => callout,
+		number => Number
+	}, ListItem).
+
+%% <1> annotation
+%% 1> annotation
+%% > annotation (implicit numbering)
+%% User Guide 20: optional <, digits, >, whitespace, then item text.
+callout_marker(Line) ->
+	{Number, Rest} = callout_prefix(Line),
+	<<C, Item/bits>> = Rest,
+	true = ?IS_WS(C),
+	true = trim(Item) =/= <<>>,
+	{Number, Rest}.
+
+callout_prefix(<<"<", C, Rest/bits>>) when C >= $0, C =< $9 ->
+	{Num, <<">", R/bits>>} = while(fun is_digit/1, <<C, Rest/bits>>),
+	{binary_to_integer(Num), R};
+callout_prefix(<<C, Rest/bits>>) when C >= $0, C =< $9 ->
+	{Num, <<">", R/bits>>} = while(fun is_digit/1, <<C, Rest/bits>>),
+	{binary_to_integer(Num), R};
+callout_prefix(<<">", Rest/bits>>) ->
+	{auto, Rest}.
+
+is_digit(C) ->
+	(C >= $0) andalso (C =< $9).
+
+is_callout_line(Line) ->
+	try
+		_ = callout_marker(Line),
+		true
+	catch _:_ ->
+		false
+	end.
+
+-ifdef(TEST).
+callout_list_test() ->
+	[{list_item, #{type := callout, number := 1},
+		[{paragraph, _, <<"This directory holds MS-DOS.">>, _}], _}]
+		= parse(<<"<1> This directory holds MS-DOS.">>),
+	[{list_item, #{type := callout, number := 2},
+		[{paragraph, _, <<"System startup code for DOS.">>, _}], _}]
+		= parse(<<"2> System startup code for DOS.">>),
+	[{list_item, #{type := callout, number := auto},
+		[{paragraph, _, <<"Some sort of Windows 3.1 hack.">>, _}], _}]
+		= parse(<<"> Some sort of Windows 3.1 hack.">>),
+	[
+		{list_item, #{type := callout, number := 1},
+			[{paragraph, _, <<"First.">>, _}], _},
+		{list_item, #{type := callout, number := 2},
+			[{paragraph, _, <<"Second.">>, _}], _}
+	] = parse(<<"<1> First.\n<2> Second.">>),
+	%% Must be hard against the left margin.
+	?NOT(callout, parse(<<" <1> Indented.">>)),
+	%% Whitespace and item text are required.
+	?NOT(callout, parse(<<"<1>NoSpace">>)),
+	?NOT(callout, parse(<<"3>2 is false">>)),
+	?NOT(callout, parse(<<">=">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 17
 %%
@@ -645,7 +680,8 @@ list_item(St, Attrs, ListItem0) ->
 		_ ->
 			ok
 	end,
-	%% A list item ends on end of file, empty line or when a new list starts.
+	%% A list item ends on end of file, an empty line, another
+	%% list, an attribute list, or a delimited block.
 	%% Any indentation is optional and therefore removed.
 	ListItem = read_while(St, fun fold_list_item/1, ListItem1),
 	{list_item, Attrs, [{paragraph, #{}, ListItem, Ann}], Ann}.
@@ -677,10 +713,21 @@ fold_list_item(Line0) ->
 		<<"....", C, _/bits>> when ?IS_WS(C) -> done;
 		<<".....", C, _/bits>> when ?IS_WS(C) -> done;
 		Line ->
-			try find_labeled_list(Line) of
-				{_, _, _} -> done
-			catch _:_ ->
-				{more, Line}
+			%% Same terminators as a paragraph, except list markers,
+			%% which this reader stops for above. A block title is
+			%% not one of them.
+			case attribute_list_line(Line0) orelse delimited_line(Line0) of
+				true ->
+					done;
+				false ->
+					try find_labeled_list(Line) of
+						{_, _, _} -> done
+					catch _:_ ->
+						case is_callout_line(Line0) of
+							true -> done;
+							false -> {more, Line}
+						end
+					end
 			end
 	end.
 
@@ -716,6 +763,17 @@ list_item_test() ->
 		"* List item.\n"
 		"Multiline.\n"
 		"Question:: Answer!\n">>),
+	%% An attribute list or a delimited block ends the item.
+	[
+		{list_item, _, [{paragraph, _, <<"One.">>, _}], _},
+		{attribute_list, _, _, _},
+		{list_item_continuation, _, _, _},
+		{paragraph, _, <<"code">>, _}
+	] = parse(<<"* One.\n[source,erlang]\n+\ncode\n">>),
+	[
+		{list_item, _, [{paragraph, _, <<"One.">>, _}], _},
+		{listing_block, _, <<"code">>, _}
+	] = parse(<<"* One.\n----\ncode\n----\n">>),
 	ok.
 -endif.
 
@@ -724,13 +782,124 @@ list_item_continuation(St) ->
 	%% Continuations are a single + hard against the left margin.
 	<<$+, Whitespace/bits>> = read_line(St),
 	<<>> = trim(Whitespace),
-	{list_item_continuation, #{}, <<>>, ann(St)}.
+	Ann = ann(St),
+	%% The lists pass may turn this + into a paragraph. Capture
+	%% the lines the paragraph reader would keep, then rewind so
+	%% those lines are still parsed as blocks for a real continuation.
+	{Raw, RawLast} = plus_raw(St, maps:get(line, Ann)),
+	{list_item_continuation, #{}, <<>>, Ann#{raw => Raw, raw_last => RawLast}}.
+
+%% Paragraph terminators are a blank line, a + hard against
+%% the left margin, an attribute list, or a delimited block.
+%% A // comment at the left margin is skipped. List markers
+%% and block titles are kept: this reader is not the one
+%% that ends a paragraph at a list.
+plus_raw(St=#state{reader=ReaderPid}, Line) ->
+	Start = asciideck_reader:get_position(ReaderPid),
+	{Lines, Count} = collect_plus_lines(St, [], 0),
+	asciideck_reader:set_position(ReaderPid, Start),
+	{join_plus_lines([<<"+">>|Lines]), Line + Count}.
+
+collect_plus_lines(St, Acc, Count) ->
+	case read_line(St) of
+		eof ->
+			{lists:reverse(Acc), Count};
+		Line ->
+			case classify_plus_line(Line) of
+				stop ->
+					{lists:reverse(Acc), Count};
+				skip ->
+					collect_plus_lines(St, Acc, Count + 1);
+				keep ->
+					collect_plus_lines(St, [trim(Line, trailing)|Acc], Count + 1)
+			end
+	end.
+
+classify_plus_line(Line) ->
+	case plus_line_end(Line) of
+		true ->
+			stop;
+		false ->
+			case is_margin_comment(Line) of
+				true -> skip;
+				false -> keep
+			end
+	end.
+
+%% Only a + in column 0 ends the paragraph. Indent stays text.
+plus_line_end(Line0) ->
+	case trim(Line0, trailing) of
+		<<>> -> true;
+		<<"+">> -> true;
+		_ ->
+			attribute_list_line(Line0) orelse delimited_line(Line0)
+	end.
+
+%% ^//([^/].*)?$ after trailing space is removed. /// is text.
+is_margin_comment(Line0) ->
+	case trim(Line0, trailing) of
+		<<"//">> ->
+			true;
+		<<"//", C, _/bits>> when C =/= $/ ->
+			true;
+		_ ->
+			false
+	end.
+
+join_plus_lines([Line]) ->
+	Line;
+join_plus_lines([Line|Rest]) ->
+	<<Line/binary, $\n, (join_plus_lines(Rest))/binary>>.
 
 -ifdef(TEST).
 list_item_continuation_test() ->
 	[{list_item_continuation, _, _, _}] = parse(<<"+">>),
 	[{list_item_continuation, _, _, _}] = parse(<<"+   ">>),
 	[{list_item_continuation, _, _, _}] = parse(<<"+\n">>),
+	%% The following lines stay blocks. raw keeps the paragraph text.
+	[
+		{list_item_continuation, _, _, #{raw := <<"+\n  foo()">>, raw_last := 2}},
+		{literal_paragraph, _, <<"foo()">>, #{line := 2}}
+	] = parse(<<"+\n  foo()\n">>),
+	%% A comment is not paragraph text, but it is part of the span.
+	[
+		{list_item_continuation, _, _, #{raw := <<"+\ntext">>, raw_last := 3}},
+		{comment_line, _, <<"note">>, #{line := 2}},
+		{paragraph, _, <<"text">>, #{line := 3}}
+	] = parse(<<"+\n// note\ntext\n">>),
+	%% An indented + or // is text. /// is not a comment either.
+	[
+		{list_item_continuation, _, _, #{raw := <<"+\n  +\nmore">>}},
+		{literal_paragraph, _, <<"+">>, _},
+		{paragraph, _, <<"more">>, _}
+	] = parse(<<"+\n  +\nmore\n">>),
+	[
+		{list_item_continuation, _, _, #{
+			raw := <<"+\n  // not a comment\ntext">>
+		}},
+		{literal_paragraph, _, <<"// not a comment">>, _},
+		{paragraph, _, <<"text">>, _}
+	] = parse(<<"+\n  // not a comment\ntext\n">>),
+	%% /// matches the comment parser. raw still keeps the line.
+	[
+		{list_item_continuation, _, _, #{
+			raw := <<"+\n/// not comment\ntext">>
+		}},
+		{comment_line, _, <<"/ not comment">>, _},
+		{paragraph, _, <<"text">>, _}
+	] = parse(<<"+\n/// not comment\ntext\n">>),
+	%% The snapshot keeps the source lines. The blocks are still parsed.
+	[
+		{list_item_continuation, _, _, #{
+			raw := <<"+\nNOTE: careful\nstill">>,
+			raw_last := 3
+		}},
+		{admonition, _, <<"careful\nstill">>, #{line := 2}}
+	] = parse(<<"+\nNOTE: careful\nstill\n">>),
+	[
+		{list_item_continuation, _, _, #{raw := <<"+">>, raw_last := 1}},
+		{table, _, _, #{line := 2}}
+	] = parse(<<"+\n|===\n|A\n|===\n">>),
 	ok.
 -endif.
 
@@ -772,18 +941,200 @@ literal_block_test() ->
 -endif.
 
 %% Asciidoc User Guide 16.4
+%%
+%% The body is a section body (Block, not Title). Parse each
+%% block in place, so a line of asterisks inside that block
+%% stays there. A line of four or more asterisks ends the
+%% sidebar when it is the next block. A one-line title at
+%% the next block is not a section body element, so it is
+%% dropped. A bare marker such as `==` stays text.
 sidebar_block(St) ->
-	delimited_block(St, sidebar_block, $*).
+	Four = <<$*, $*, $*, $*>>,
+	<<Four:4/binary, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	repeats(trim(Line0, trailing), $*),
+	{sidebar_block, #{}, sidebar_body(St), Ann}.
+
+sidebar_body(St) ->
+	skip(fun empty_line/1, St),
+	case sidebar_closer(St) of
+		true ->
+			[];
+		false ->
+			case drop_sidebar_title(St) of
+				true ->
+					sidebar_body(St);
+				false ->
+					sidebar_block_child(St)
+			end
+	end.
+
+sidebar_block_child(St) ->
+	case block(St) of
+		eof ->
+			[];
+		%% `==` followed by a blank line is an empty title.
+		%% The marker is text. A non-empty title was already
+		%% dropped, including one that has no blank line after it.
+		{section_title, #{level := Level}, <<>>, Ann} ->
+			Marker = binary:copy(<<"=">>, Level + 1),
+			[{paragraph, #{}, Marker, Ann}|sidebar_body(St)];
+		{section_title, _, _, _} ->
+			sidebar_body(St);
+		Child ->
+			[Child|sidebar_body(St)]
+	end.
+
+%% Leave the reader unmoved when this line is not the closer.
+sidebar_closer(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		Four = <<$*, $*, $*, $*>>,
+		<<Four:4/binary, Line0/bits>> = read_line(St),
+		repeats(trim(Line0, trailing), $*),
+		true
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
+
+%% User Guide 11.2, at a block boundary. One to five equals,
+%% then space, then text. The trailing marker is optional.
+%% `==` and `== ` have no text, so they are not titles.
+drop_sidebar_title(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		true = sidebar_title_line(read_line(St))
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
+
+sidebar_title_line(Line) when is_binary(Line) ->
+	case title_rest(trim(Line, trailing), 0) of
+		{_, Rest} ->
+			trim(Rest) =/= <<>>;
+		_ ->
+			false
+	end;
+sidebar_title_line(_) ->
+	false.
+
+title_rest(<<$=, Rest/bits>>, N) when N < 5 ->
+	title_rest(Rest, N + 1);
+title_rest(<<C, Rest/bits>>, N) when N >= 1, ?IS_WS(C) ->
+	{N, Rest};
+title_rest(_, _) ->
+	false.
 
 -ifdef(TEST).
 sidebar_block_test() ->
-	Block = <<
+	[{sidebar_block, _, [
+		{paragraph, _, <<
+			"Any AsciiDoc SectionBody element (apart from\n"
+			"SidebarBlocks) can be placed inside a sidebar."
+		>>, _}
+	], _}] = parse(<<
+		"************************************************\n"
 		"Any AsciiDoc SectionBody element (apart from\n"
-		"SidebarBlocks) can be placed inside a sidebar.">>,
-	[{sidebar_block, _, Block, _}] = parse(<<
-		"************************************************\n",
-		Block/binary, "\n"
+		"SidebarBlocks) can be placed inside a sidebar.\n"
 		"************************************************\n">>),
+	[{sidebar_block, _, [
+		{paragraph, _, <<"First paragraph.">>, _},
+		{paragraph, _, <<"Second paragraph.">>, _},
+		{listing_block, _, <<"code">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"First paragraph.\n"
+		"\n"
+		"Second paragraph.\n"
+		"\n"
+		"----\n"
+		"code\n"
+		"----\n"
+		"****\n">>),
+	%% The inner delimiter ends the outer sidebar.
+	[
+		{sidebar_block, _, [{paragraph, _, <<"outer">>, _}], _},
+		{paragraph, _, <<"inner">>, _},
+		{sidebar_block, _, [], _}
+	] = parse(<<
+		"****\n"
+		"outer\n"
+		"\n"
+		"****\n"
+		"inner\n"
+		"****\n"
+		"****\n">>),
+	%% A line of four bytes is not a sidebar.
+	[{paragraph, _, <<"code">>, _}] = parse(<<"code\n">>),
+	%% Asterisks inside a nested block do not end the sidebar.
+	[{sidebar_block, _, [
+		{listing_block, _, <<"****\ncode">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"----\n"
+		"****\n"
+		"code\n"
+		"----\n"
+		"****\n">>),
+	[{sidebar_block, _, [
+		{table, _, <<"|A\n****\n|B">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"|===\n"
+		"|A\n"
+		"****\n"
+		"|B\n"
+		"|===\n"
+		"****\n">>),
+	%% A section title is not a section body element.
+	[{sidebar_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"****\n">>),
+	[{sidebar_block, _, [
+		{paragraph, _, <<"before\n== Not a title\nafter">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"before\n"
+		"== Not a title\n"
+		"after\n"
+		"****\n">>),
+	%% A title at the next block is dropped with no blank line.
+	[{sidebar_block, _, [
+		{paragraph, _, <<"para">>, _},
+		{paragraph, _, <<"still">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"para\n"
+		"\n"
+		"== Title\n"
+		"still\n"
+		"****\n">>),
+	%% A marker with no title text stays text.
+	[{sidebar_block, _, [
+		{paragraph, _, <<"==">>, _},
+		{paragraph, _, <<"body">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"== \n"
+		"\n"
+		"body\n"
+		"****\n">>),
+	[{sidebar_block, _, [
+		{block_macro, #{name := <<"image">>, target := <<"logo.png">>}, <<>>, _}
+	], _}] = parse(<<
+		"****\n"
+		"image::logo.png[Logo]\n"
+		"****\n">>),
 	ok.
 -endif.
 
@@ -822,8 +1173,363 @@ passthrough_block_test() ->
 -endif.
 
 %% Asciidoc User Guide 16.7
-quote_block(St) ->
-	delimited_block(St, quote_block, $_).
+%%
+%% Quote style is a section body, same as a sidebar, so a line of
+%% underscores inside a nested block stays there. Verse is not:
+%% the first line of four or more underscores ends it, even inside
+%% what would have been a listing. The style is the attribute list
+%% already read above the opener.
+quote_block(St=#state{reader=ReaderPid}) ->
+	Four = <<$_, $_, $_, $_>>,
+	<<Four:4/binary, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	repeats(trim(Line0, trailing), $_),
+	BodyPos = asciideck_reader:get_position(ReaderPid),
+	Verse = verse_before(ReaderPid, BodyPos),
+	asciideck_reader:set_position(ReaderPid, BodyPos),
+	case Verse of
+		true ->
+			verse_quote(St, Ann);
+		false ->
+			section_quote(St, Ann, BodyPos)
+	end.
+
+%% Verse keeps every line up to the closer. Children are not blocks.
+verse_quote(St, Ann) ->
+	Raw = read_while(St, fun fold_verse/1, <<>>, keep),
+	_ = read_line(St),
+	{quote_block, #{}, [], Ann#{raw => Raw}}.
+
+fold_verse(eof) ->
+	done;
+fold_verse(Line) ->
+	case verse_closer(Line) of
+		true -> done;
+		false -> {more, Line}
+	end.
+
+verse_closer(Line0) when is_binary(Line0) ->
+	Four = <<$_, $_, $_, $_>>,
+	case Line0 of
+		<<Four:4/binary, Line1/bits>> ->
+			try repeats(trim(Line1, trailing), $_) of
+				_ -> true
+			catch _:_ ->
+				false
+			end;
+		_ ->
+			false
+	end;
+verse_closer(_) ->
+	false.
+
+%% Start is the first body line. A closer has been read when
+%% the body returns, so that line is End - 1.
+section_quote(St=#state{reader=ReaderPid}, Ann, Start) ->
+	{Children, Closed} = quote_body(St),
+	End = asciideck_reader:get_position(ReaderPid),
+	Last = case Closed of
+		true -> End - 2;
+		false -> End - 1
+	end,
+	Raw = read_span(ReaderPid, Start, Last),
+	{quote_block, #{}, Children, Ann#{raw => Raw}}.
+
+%% Positional attribute 1 on the lists above this opener.
+%% The closest list wins. Titles, ids, attribute entries,
+%% comment lines, and comment blocks do not consume the list.
+verse_before(Pid, BodyPos) ->
+	%% Walked upward, so the closest list is last and wins.
+	Attrs = lookback_attrs(Pid, BodyPos - 2, []),
+	Merged = lists:foldl(fun(A, Acc) -> merge_quote_attrs(Acc, A) end,
+		#{}, Attrs),
+	quote_style(Merged) =:= <<"verse">>.
+
+%% An empty positional value is unset. In that same list it hides
+%% the named attribute for the position. It does not clear a value
+%% written in another list. A non-empty positional still wins.
+merge_quote_attrs(Earlier, Closer) ->
+	maps:merge(prepare_quote_attrs(Earlier), prepare_quote_attrs(Closer)).
+
+prepare_quote_attrs(Attrs) ->
+	Attrs1 = suppress_named(Attrs, 1, <<"style">>),
+	Attrs2 = suppress_named(Attrs1, 2, <<"attribution">>),
+	Attrs3 = suppress_named(Attrs2, 3, <<"citetitle">>),
+	drop_empty_pos(Attrs3).
+
+suppress_named(Attrs, Pos, Name) ->
+	case maps:get(Pos, Attrs, undefined) of
+		<<>> -> maps:remove(Name, Attrs);
+		_ -> Attrs
+	end.
+
+drop_empty_pos(Attrs) ->
+	maps:filter(fun
+		(Key, <<>>) when is_integer(Key), Key > 0 -> false;
+		(_, _) -> true
+	end, Attrs).
+
+%% Positional attribute 1 is the style when that key was written,
+%% even if a named style was written too. Otherwise the named
+%% style is used. The default style is quote.
+quote_style(Attrs) ->
+	case maps:is_key(1, Attrs) of
+		true ->
+			maps:get(1, Attrs);
+		false ->
+			maps:get(<<"style">>, Attrs, <<"quote">>)
+	end.
+
+lookback_attrs(_Pid, Line, Acc) when Line < 1 ->
+	Acc;
+lookback_attrs(Pid, Line, Acc) ->
+	asciideck_reader:set_position(Pid, Line),
+	case asciideck_reader:read_line(Pid) of
+		eof ->
+			Acc;
+		Text ->
+			%% A space-plus entry owns this line, whatever it looks like.
+			case attr_continuation(Pid, Line) of
+				true ->
+					lookback_attrs(Pid, Line - 1, Acc);
+				false ->
+					case look_line(trim(Text, trailing)) of
+						blank ->
+							lookback_attrs(Pid, Line - 1, Acc);
+						skip ->
+							lookback_attrs(Pid, Line - 1, Acc);
+						{attr, Attrs} ->
+							lookback_attrs(Pid, Line - 1, [Attrs|Acc]);
+						comment_block ->
+							skip_comment_block(Pid, Line - 1, Acc);
+						stop ->
+							Acc
+					end
+			end
+	end.
+
+%% The previous line is an attribute entry value that ends in " +",
+%% or a continuation of one. This line is part of that value.
+attr_continuation(Pid, Line) when Line > 1 ->
+	consumes_next(Pid, Line - 1);
+attr_continuation(_, _) ->
+	false.
+
+consumes_next(Pid, Line) when Line >= 1 ->
+	asciideck_reader:set_position(Pid, Line),
+	case asciideck_reader:read_line(Pid) of
+		eof ->
+			false;
+		Text0 ->
+			Text = trim(Text0, trailing),
+			case ends_plus(Text) of
+				true ->
+					entry_line(Text) orelse consumes_next(Pid, Line - 1);
+				false ->
+					false
+			end
+	end;
+consumes_next(_, _) ->
+	false.
+
+ends_plus(Text) ->
+	Len = byte_size(Text),
+	case Len >= 2 of
+		true ->
+			PrefixLen = Len - 2,
+			case Text of
+				<<_:PrefixLen/binary, $\s, $+>> -> true;
+				_ -> false
+			end;
+		false ->
+			false
+	end.
+
+%% The delimiter above the quote is the closer. The opener is
+%% further up. Lines inside the block are not attributes.
+skip_comment_block(_Pid, Line, Acc) when Line < 1 ->
+	Acc;
+skip_comment_block(Pid, Line, Acc) ->
+	asciideck_reader:set_position(Pid, Line),
+	case asciideck_reader:read_line(Pid) of
+		eof ->
+			Acc;
+		Text ->
+			case comment_kind(trim(Text, trailing)) of
+				block ->
+					lookback_attrs(Pid, Line - 1, Acc);
+				_ ->
+					skip_comment_block(Pid, Line - 1, Acc)
+			end
+	end.
+
+look_line(<<>>) ->
+	blank;
+look_line(Line) ->
+	case comment_kind(Line) of
+		line ->
+			skip;
+		block ->
+			comment_block;
+		false ->
+			case block_id_line(Line) of
+				true ->
+					skip;
+				false ->
+					look_line1(Line)
+			end
+	end.
+
+%% // and //text are comment lines. //// is a comment block.
+comment_kind(<<"//", Rest/bits>>) ->
+	case slash_run(Rest) andalso byte_size(Rest) >= 2 of
+		true -> block;
+		false -> line
+	end;
+comment_kind(_) ->
+	false.
+
+slash_run(<<>>) ->
+	true;
+slash_run(<<$/, Rest/bits>>) ->
+	slash_run(Rest);
+slash_run(_) ->
+	false.
+
+look_line1(<<$[, _/bits>> = Line) ->
+	case attribute_list_line(Line) of
+		true ->
+			%% A list this parser rejects is its own paragraph.
+			%% The failure must not abandon the quote delimiter.
+			try
+				{attr, parse_attr_line(Line)}
+			catch _:_ ->
+				stop
+			end;
+		false ->
+			stop
+	end;
+look_line1(Line) ->
+	%% Four or more dots is a literal delimiter, not a block title.
+	case delimited_line(Line) of
+		true ->
+			stop;
+		false ->
+			case entry_line(Line) orelse title_line(Line) of
+				true -> skip;
+				false -> stop
+			end
+	end.
+
+block_id_line(<<"[[", Rest/bits>>) ->
+	try
+		Line = trim(Rest),
+		Len = byte_size(Line) - 2,
+		<<ID:Len/binary, "]]">> = Line,
+		{ID, <<>>} = while(fun(C) ->
+			(C =/= $,) andalso (C =/= $[) andalso (C =/= $])
+			andalso (C =/= $\s) andalso (C =/= $\t)
+		end, ID),
+		true
+	catch _:_ ->
+		false
+	end;
+block_id_line(_) ->
+	false.
+
+parse_attr_line(Line) ->
+	<<$[, Rest0/bits>> = Line,
+	Rest1 = trim(Rest0),
+	Len = byte_size(Rest1) - 1,
+	<<Body:Len/binary, $]>> = Rest1,
+	asciideck_attributes_parser:parse(Body).
+
+entry_line(<<$:, Line/bits>>) ->
+	case while(fun(C) -> C =/= $: end, Line) of
+		{Name, <<$:, _/bits>>} when Name =/= <<>> ->
+			sanitize_attr_name(Name) =/= <<>>;
+		_ ->
+			false
+	end;
+entry_line(_) ->
+	false.
+
+%% `.Notes` is a block title. `. Notes` is a list item.
+title_line(<<$., C, _/bits>>) when ?IS_WS(C) ->
+	false;
+title_line(<<$., _/bits>>) ->
+	true;
+title_line(_) ->
+	false.
+
+quote_body(St) ->
+	skip(fun empty_line/1, St),
+	case quote_closer(St) of
+		true ->
+			{[], true};
+		false ->
+			case drop_sidebar_title(St) of
+				true ->
+					quote_body(St);
+				false ->
+					quote_child(St)
+			end
+	end.
+
+quote_child(St) ->
+	case block(St) of
+		eof ->
+			{[], false};
+		%% `==` followed by a blank line is an empty title.
+		%% The marker is text. A non-empty title was already dropped.
+		{section_title, #{level := Level}, <<>>, Ann} ->
+			Marker = binary:copy(<<"=">>, Level + 1),
+			{Rest, Closed} = quote_body(St),
+			{[{paragraph, #{}, Marker, Ann}|Rest], Closed};
+		{section_title, _, _, _} ->
+			quote_body(St);
+		Child ->
+			{Rest, Closed} = quote_body(St),
+			{[Child|Rest], Closed}
+	end.
+
+%% Leave the reader unmoved when this line is not the closer.
+quote_closer(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		Four = <<$_, $_, $_, $_>>,
+		<<Four:4/binary, Line0/bits>> = read_line(St),
+		repeats(trim(Line0, trailing), $_),
+		true
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
+
+%% Body lines from Start through Last, inclusive. The reader
+%% is put back on the line after the quote.
+read_span(_, Start, Last) when Last < Start ->
+	<<>>;
+read_span(Pid, Start, Last) ->
+	Pos = asciideck_reader:get_position(Pid),
+	asciideck_reader:set_position(Pid, Start),
+	try take_lines(Pid, Last - Start + 1, [])
+	after asciideck_reader:set_position(Pid, Pos)
+	end.
+
+take_lines(_, 0, []) ->
+	<<>>;
+take_lines(_, 0, Acc) ->
+	join_lines(lists:reverse(Acc));
+take_lines(Pid, N, Acc) ->
+	case asciideck_reader:read_line(Pid) of
+		eof when Acc =:= [] ->
+			<<>>;
+		eof ->
+			join_lines(lists:reverse(Acc));
+		Line ->
+			take_lines(Pid, N - 1, [Line|Acc])
+	end.
 
 -ifdef(TEST).
 quote_block_test() ->
@@ -836,26 +1542,491 @@ quote_block_test() ->
 		"out of the window. \"A nice little brougham and a pair of\n"
 		"beauties. A hundred and fifty guineas apiece. There's money in\n"
 		"this case, Watson, if there is nothing else.\"">>,
-	[{quote_block, _, Block, _}] = parse(<<
+	[{quote_block, _, [
+		{paragraph, _, <<
+			"As he spoke there was the sharp sound of horses' hoofs and\n"
+			"grating wheels against the curb, followed by a sharp pull at the\n"
+			"bell. Holmes whistled."
+		>>, _},
+		{paragraph, _, <<
+			"\"A pair, by the sound,\" said he. \"Yes,\" he continued, glancing\n"
+			"out of the window. \"A nice little brougham and a pair of\n"
+			"beauties. A hundred and fifty guineas apiece. There's money in\n"
+			"this case, Watson, if there is nothing else.\""
+		>>, _}
+	], #{raw := Block}}] = parse(<<
 		"____________________________________________________________________\n",
 		Block/binary, "\n"
 		"____________________________________________________________________\n">>),
+	%% A line of four bytes is not a quote.
+	[{paragraph, _, <<"code">>, _}] = parse(<<"code\n">>),
+	[{paragraph, _, <<"____text">>, _}] = parse(<<"____text\n">>),
+	%% The inner delimiter ends the outer quote.
+	[
+		{quote_block, _, [{paragraph, _, <<"outer">>, _}], _},
+		{paragraph, _, <<"inner">>, _},
+		{quote_block, _, [], _}
+	] = parse(<<
+		"____\n"
+		"outer\n"
+		"\n"
+		"____\n"
+		"inner\n"
+		"____\n"
+		"____\n">>),
+	%% Underscores inside a nested block do not end the quote.
+	[{quote_block, _, [
+		{paragraph, _, <<"Intro paragraph is long enough.">>, _},
+		{listing_block, _, <<"____\ncode">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"Intro paragraph is long enough.\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n">>),
+	%% A section title is not a section body element.
+	[{quote_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"____\n">>),
+	[{quote_block, _, [
+		{paragraph, _, <<"before\n== Not a title\nafter">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"before\n"
+		"== Not a title\n"
+		"after\n"
+		"____\n">>),
+	%% A title at the next block is dropped with no blank line.
+	[{quote_block, _, [
+		{paragraph, _, <<"para">>, _},
+		{paragraph, _, <<"still">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"para\n"
+		"\n"
+		"== Title\n"
+		"still\n"
+		"____\n">>),
+	%% A marker with no title text stays text.
+	[{quote_block, _, [
+		{paragraph, _, <<"==">>, _},
+		{paragraph, _, <<"body">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"== \n"
+		"\n"
+		"body\n"
+		"____\n">>),
+	[{quote_block, _, [
+		{block_macro, #{name := <<"image">>, target := <<"logo.png">>}, <<>>, _}
+	], _}] = parse(<<
+		"____\n"
+		"image::logo.png[Logo]\n"
+		"____\n">>),
+	%% A closer on the next line still belongs to the quote.
+	[{quote_block, _, [{paragraph, _, <<"Hi.">>, _}], _},
+		{paragraph, _, <<"After">>, _}] = parse(<<
+		"____\n"
+		"Hi.\n"
+		"____\n"
+		"After\n">>),
+	%% An indented line of underscores is not a closer.
+	[{quote_block, _, [{paragraph, _, <<"Hi.\n ____">>, _}], _}] = parse(<<
+		"____\n"
+		"Hi.\n"
+		" ____\n"
+		"____\n">>),
+	%% Verse ends at the first underscore line, even inside a listing.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"intro\n\n----">>}} | _] = parse(<<
+		"[verse]\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n">>),
+	%% The closest attribute list sets the style.
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"line">>}}] = parse(<<
+		"[quote, Ann, Book]\n"
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _} | _] = parse(<<
+		"[verse]\n"
+		"[quote, Ann, Book]\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{block_title, _, <<"Title">>, _},
+		{quote_block, _, [], #{raw := <<"line">>}} | _] = parse(<<
+		"[verse]\n"
+		".Title\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% A blank line does not detach the style from the opener.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"line">>}} | _] = parse(<<
+		"[verse]\n"
+		"\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% A comment does not consume the style.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{comment_line, _, <<"comment">>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[verse]\n"
+		"// comment\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{comment_line, _, <<"c">>, _},
+		{quote_block, _, [{paragraph, _, <<"Words.">>, _}], _}] = parse(<<
+		"[quote, Ann, Book]\n"
+		"// c\n"
+		"____\n"
+		"Words.\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{comment_block, _, <<"hidden">>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[verse]\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	%% Named style is verse only when positional 1 was not written.
+	[{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{<<"style">> := <<"quote">>}, <<>>, _},
+		{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[style=\"quote\"]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{quote_block, _, [{paragraph, _, <<"one\ntwo">>, _}], _}] = parse(<<
+		"[quote, Ann, Book]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	%% A continued attribute entry does not hide the style.
+	%% The first underscore line still ends the verse.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_entry, #{name := <<"description">>},
+			<<"hello continued">>, _},
+		{quote_block, _, [], #{raw := <<"intro\n\n----">>}} | _] = parse(<<
+		"[verse]\n"
+		":description: hello +\n"
+		"continued\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_entry, #{name := <<"description">>},
+			<<"hello foo bar">>, _},
+		{quote_block, _, [], #{raw := <<"intro">>}}] = parse(<<
+		"[verse]\n"
+		":description: hello +\n"
+		"foo +\n"
+		"bar\n"
+		"____\n"
+		"intro\n"
+		"____\n">>),
+	%% A continuation that looks like an attribute list is entry text.
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{attribute_entry, _, <<"bar [verse]">>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _}] = parse(<<
+		"[quote]\n"
+		":foo: bar +\n"
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% An empty positional style does not clear an earlier verse.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_list, #{2 := <<"Ann">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[verse]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{attribute_list, #{2 := <<"Ann">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[style=\"verse\"]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	%% A literal delimiter is not a title. The style belongs to the literal.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{literal_block, _, <<>>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _}] = parse(<<
+		"[verse]\n"
+		"....\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	[{literal_block, _, <<"[verse]">>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _}] = parse(<<
+		"....\n"
+		"[verse]\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% A list this parser rejects stays a paragraph. The delimiter still opens.
+	[{paragraph, _, <<"[quote, \"Ann]">>, _},
+		{quote_block, _, [{paragraph, _, <<"hello malformed">>, _}], _}] = parse(<<
+		"[quote, \"Ann]\n"
+		"____\n"
+		"hello malformed\n"
+		"____\n">>),
 	ok.
 -endif.
 
 %% Asciidoc User Guide 16.8
+%%
+%% The body is a section body. A one-line title is not permitted.
+%% A line of equals inside a nested block stays there. A line of
+%% four or more equals ends the example when it is the next block.
 example_block(St) ->
-	delimited_block(St, example_block, $=).
+	Four = <<$=, $=, $=, $=>>,
+	<<Four:4/binary, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	repeats(trim(Line0, trailing), $=),
+	{example_block, #{}, example_body(St), Ann}.
+
+example_body(St) ->
+	skip(fun empty_line/1, St),
+	case example_closer(St) of
+		true ->
+			[];
+		false ->
+			case drop_sidebar_title(St) of
+				true ->
+					example_body(St);
+				false ->
+					example_child(St)
+			end
+	end.
+
+example_child(St) ->
+	case block(St) of
+		eof ->
+			[];
+		%% `==` followed by a blank line is an empty title.
+		%% The marker is text. A non-empty title was already dropped.
+		{section_title, #{level := Level}, <<>>, Ann} ->
+			Marker = binary:copy(<<"=">>, Level + 1),
+			[{paragraph, #{}, Marker, Ann}|example_body(St)];
+		{section_title, _, _, _} ->
+			example_body(St);
+		Child ->
+			[Child|example_body(St)]
+	end.
+
+%% Leave the reader unmoved when this line is not the closer.
+example_closer(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		Four = <<$=, $=, $=, $=>>,
+		<<Four:4/binary, Line0/bits>> = read_line(St),
+		repeats(trim(Line0, trailing), $=),
+		true
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
 
 -ifdef(TEST).
 example_block_test() ->
-	Block = <<
+	[{example_block, _, [
+		{paragraph, _, <<
+			"Qui in magna commodo, est labitur dolorum an. Est ne magna primis\n"
+			"adolescens."
+		>>, _}
+	], _}] = parse(<<
+		"=====================================================================\n"
 		"Qui in magna commodo, est labitur dolorum an. Est ne magna primis\n"
-		"adolescens.">>,
-	[{example_block, _, Block, _}] = parse(<<
-		"=====================================================================\n",
-		Block/binary, "\n"
+		"adolescens.\n"
 		"=====================================================================\n">>),
+	%% Equals inside a nested block do not end the example.
+	[{example_block, _, [
+		{paragraph, _, <<"Intro paragraph is long enough.">>, _},
+		{listing_block, _, <<"====\ncode">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"Intro paragraph is long enough.\n"
+		"\n"
+		"----\n"
+		"====\n"
+		"code\n"
+		"----\n"
+		"====\n">>),
+	%% A section title is not a section body element.
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% A block title stays. It titles the next paragraph.
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{block_title, _, <<"Inner">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		".Inner\n"
+		"after\n"
+		"====\n">>),
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{sidebar_block, _, [{paragraph, _, <<"side">>, _}], _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		"****\n"
+		"side\n"
+		"****\n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% The inner delimiter ends the outer example.
+	[
+		{example_block, _, [{paragraph, _, <<"outer">>, _}], _},
+		{paragraph, _, <<"inner">>, _},
+		{example_block, _, [], _}
+	] = parse(<<
+		"====\n"
+		"outer\n"
+		"\n"
+		"====\n"
+		"inner\n"
+		"====\n"
+		"====\n">>),
+	[{example_block, _, [], _},
+		{paragraph, _, <<"after">>, _}] = parse(<<
+		"====\n"
+		"====\n"
+		"after\n">>),
+	%% A shorter or longer line of equals still closes the example.
+	[{example_block, _, [{paragraph, _, <<"hello">>, _}], _}] = parse(<<
+		"==========\n"
+		"hello\n"
+		"====\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello">>, _}], _}] = parse(<<
+		"====\n"
+		"hello\n"
+		"==========\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello">>, _}], _}] = parse(<<
+		"====  \n"
+		"hello\n"
+		"====\n">>),
+	%% `==== Title` is a one-line title, not a closer.
+	[{example_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"before\n"
+		"\n"
+		"==== Dropped\n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% A marker with no title text stays text.
+	[{example_block, _, [
+		{paragraph, _, <<"==">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"====\n"
+		"== \n"
+		"\n"
+		"after\n"
+		"====\n">>),
+	%% Trailing space and a following blank line are still a delimiter.
+	%% The same line without them would be an empty section title.
+	[{example_block, _, [{paragraph, _, <<"hello there friend">>, _}], _}]
+		= parse(<<
+		"==== \n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"====\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello there friend">>, _}], _}]
+		= parse(<<
+		"====\t\n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"====\n">>),
+	[{example_block, _, [{paragraph, _, <<"hello there friend">>, _}], _}]
+		= parse(<<
+		"===== \n"
+		"\n"
+		"hello there friend\n"
+		"\n"
+		"=====\n">>),
 	ok.
 -endif.
 
@@ -873,7 +2044,14 @@ delimited_block(St, Name, Char, Attrs, Four) ->
 	Line = trim(Line0, trailing),
 	repeats(Line, Char),
 	%% Get the content of the block as-is.
-	Block = read_while(St, fun(L) -> fold_delimited_block(L, Four, Char) end, <<>>),
+	%% A table body must keep leading empty lines so cell line
+	%% numbers still count them. Other blocks drop those lines
+	%% from their text, as they always have.
+	Keep = case Name of
+		table -> keep;
+		_ -> drop
+	end,
+	Block = read_while(St, fun(L) -> fold_delimited_block(L, Four, Char) end, <<>>, Keep),
 	%% Skip the trailing delimiter line.
 	_ = read_line(St),
 	{Name, Attrs, Block, Ann}.
@@ -910,12 +2088,123 @@ delimited_block_test() ->
 	[{listing_block, _, <<"Hello!\n">>, _}] = parse(<<
 		"----\n"
 		"Hello!">>),
+	%% A leading empty line is not part of the listing text.
+	[{listing_block, _, <<"Hi">>, _}] = parse(<<
+		"----\n"
+		"\n"
+		"Hi\n"
+		"----\n">>),
 	ok.
 -endif.
 
 %% Asciidoc User Guide 16.10
--spec open_block(_) -> no_return().
-open_block(St) -> throw({not_implemented, St}). %% @todo
+%%
+%% Open blocks are delimited by a line of exactly two hyphens.
+%% Their contents are block elements, parsed like the rest of
+%% the document.
+open_block(St) ->
+	<<"--">> = trim(read_line(St), trailing),
+	Ann = ann(St),
+	%% Keep a leading empty line in the slice. The nested parse
+	%% skips it, and the line offset then matches the file.
+	%% raw is that slice. listing, literal, and source styles
+	%% render it instead of the parsed children.
+	Block = read_while(St, fun fold_open_block/1, <<>>, keep),
+	%% Skip the closing delimiter when present.
+	_ = read_line(St),
+	%% The slice starts on the line after the opener.
+	Children = case Block of
+		<<>> -> [];
+		_ -> parse(Block, maps:get(line, Ann))
+	end,
+	{open_block, #{}, Children, Ann#{raw => Block}}.
+
+fold_open_block(eof) ->
+	done;
+fold_open_block(Line0) ->
+	case trim(Line0, trailing) of
+		<<"--">> -> done;
+		_ -> {more, Line0}
+	end.
+
+-ifdef(TEST).
+open_block_test() ->
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _}
+	], _}] = parse(<<
+		"--\n"
+		"Hello!\n"
+		"--\n">>),
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _},
+		{paragraph, _, <<"World!">>, _}
+	], _}] = parse(<<
+		"--\n"
+		"Hello!\n"
+		"\n"
+		"World!\n"
+		"--\n">>),
+	%% Nested blocks are parsed.
+	[{open_block, _, [
+		{paragraph, _, <<"Hello!">>, _},
+		{listing_block, _, <<"f() -> ok.">>, _}
+	], _}] = parse(<<
+		"--\n"
+		"Hello!\n"
+		"\n"
+		"----\n"
+		"f() -> ok.\n"
+		"----\n"
+		"--\n">>),
+	%% Must be exactly two hyphens, hard against the left margin.
+	?NOT(open_block, parse(<<"---\nHello!\n---\n">>)),
+	?NOT(open_block, parse(<<"  --\nHello!\n  --\n">>)),
+	ok.
+
+%% Parsing a binary must not leave the line reader running.
+open_block_reader_test() ->
+	Before = line_readers(),
+	_ = parse(<<"--\nHello!\n\n----\nHi\n----\n--\n">>),
+	Started = [Pid || Pid <- line_readers(), not lists:member(Pid, Before)],
+	[] = Started,
+	ok.
+
+%% The caller owns a reader pid (stdin). Parsing must not stop it.
+reader_pid_kept_test() ->
+	{ok, Pid} = asciideck_line_reader:start_link(<<"Hello\n">>),
+	[{paragraph, _, <<"Hello">>, _}] = parse(Pid),
+	true = is_process_alive(Pid),
+	gen_server:stop(Pid),
+	ok.
+
+%% Stopping a reader must not deliver an exit to the caller.
+reader_stop_silent_test() ->
+	process_flag(trap_exit, true),
+	_ = asciideck:parse(<<
+		"--\n"
+		"\n"
+		"Hello\n"
+		"--\n"
+		"\n"
+		"|===\n"
+		"|A |B\n"
+		"|===\n"
+	>>),
+	receive
+		{'EXIT', _, Reason} -> error({reader_exit, Reason})
+	after 0 -> ok
+	end.
+
+line_readers() ->
+	[Pid || Pid <- processes(),
+		case process_info(Pid, dictionary) of
+			{dictionary, Dict} ->
+				proplists:get_value('$initial_call', Dict)
+					=:= {asciideck_line_reader, init, 1};
+			_ ->
+				false
+		end].
+-endif.
 
 %% Asciidoc User Guide 23
 %%
@@ -938,8 +2227,81 @@ table_test() ->
 -endif.
 
 %% Asciidoc User Guide 28
--spec attribute_entry(_) -> no_return().
-attribute_entry(St) -> throw({not_implemented, St}). %% @todo
+attribute_entry(St) ->
+	%% Attribute entries begin with a colon hard against the left margin.
+	<<$:, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	{Name0, <<$:, Value0/bits>>} = while(fun(C) -> C =/= $: end, Line0),
+	true = Name0 =/= <<>>,
+	{Name1, Unset} = case Name0 of
+		<<>> ->
+			{Name0, false};
+		_ ->
+			PrefixLen = byte_size(Name0) - 1,
+			case Name0 of
+				<<Prefix:PrefixLen/binary, $!>> when Prefix =/= <<>> ->
+					{Prefix, true};
+				_ ->
+					{Name0, false}
+			end
+	end,
+	Name = sanitize_attr_name(Name1),
+	true = Name =/= <<>>,
+	Value = attribute_entry_value(St, Value0),
+	{attribute_entry, #{name => Name, unset => Unset}, Value, Ann}.
+
+sanitize_attr_name(Name) ->
+	<< <<(attr_name_char(C))/binary>> || <<C>> <= Name >>.
+
+attr_name_char(C) when C >= $A, C =< $Z -> <<(C + 32)>>;
+attr_name_char(C) when C >= $a, C =< $z; C >= $0, C =< $9; C =:= $-; C =:= $_ ->
+	<<C>>;
+attr_name_char(_) ->
+	<<>>.
+
+attribute_entry_value(St, Value0) ->
+	Value1 = trim(Value0, trailing),
+	Len = byte_size(Value1),
+	case Value1 of
+		<<Prefix:(Len - 2)/binary, $\s, $+>> when Len >= 2 ->
+			case read_line(St) of
+				eof ->
+					trim(Prefix);
+				Next ->
+					Continued = <<Prefix/binary, $\s, (trim(Next))/binary>>,
+					attribute_entry_value(St, Continued)
+			end;
+		_ ->
+			trim(Value1)
+	end.
+
+-ifdef(TEST).
+attribute_entry_test() ->
+	[{attribute_entry, #{name := <<"author">>, unset := false},
+		<<"Stuart Rackham">>, _}] = parse(<<":author: Stuart Rackham">>),
+	[{attribute_entry, #{name := <<"authorinitials">>, unset := false},
+		<<"JB">>, _}] = parse(<<":Author Initials: JB">>),
+	[{attribute_entry, #{name := <<"revnumber">>, unset := false},
+		<<"5.1.1">>, _}] = parse(<<":revnumber: 5.1.1">>),
+	%% Empty value.
+	[{attribute_entry, #{name := <<"toc">>, unset := false},
+		<<>>, _}] = parse(<<":toc:">>),
+	%% Unset an attribute.
+	[{attribute_entry, #{name := <<"toc">>, unset := true},
+		<<>>, _}] = parse(<<":toc!:">>),
+	%% Continuation lines end with space and plus.
+	[{attribute_entry, #{name := <<"description">>, unset := false},
+		<<"AsciiDoc is a text document format for writing notes, "
+		  "documentation, articles, books, slideshows, web pages "
+		  "and man pages.">>, _}] = parse(<<
+			":description: AsciiDoc is a text document format for writing notes, +\n"
+			"              documentation, articles, books, slideshows, web pages +\n"
+			"              and man pages.">>),
+	%% Must be hard against the left margin and have a closing colon.
+	?NOT(attribute_entry, parse(<<":author Stuart Rackham">>)),
+	?NOT(attribute_entry, parse(<<" :author: Stuart Rackham">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 14, 29
 attribute_list(St) ->
@@ -997,20 +2359,200 @@ block_title_test() ->
 -endif.
 
 %% Asciidoc User Guide 15.2
--spec literal_para(_) -> no_return().
-literal_para(St) -> throw({not_implemented, St}). %% @todo
+%%
+%% An indented paragraph is implicitly a literal paragraph.
+%% The [literal] style on a normal paragraph is handled later
+%% by the transform pass.
+literal_para(St) ->
+	%% First line must be indented by one or more spaces or tabs.
+	<<C, _/bits>> = Line0 = read_line(St),
+	true = ?IS_WS(C),
+	Ann = ann(St),
+	%% Keep every indented line, then strip the minimum indent.
+	%% A later line may be indented less than the first.
+	Lines = literal_lines(St, [trim(Line0, trailing)]),
+	{literal_paragraph, #{<<"subs">> => <<"verbatim">>},
+		literal_text(Lines), Ann}.
+
+literal_lines(St=#state{reader=ReaderPid}, Acc) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	case read_line(St) of
+		eof ->
+			lists:reverse(Acc);
+		Line0 ->
+			case trim(Line0) of
+				<<>> ->
+					asciideck_reader:set_position(ReaderPid, Ln),
+					lists:reverse(Acc);
+				_ ->
+					<<C, _/bits>> = Line0,
+					case ?IS_WS(C) of
+						true ->
+							literal_lines(St, [trim(Line0, trailing)|Acc]);
+						false ->
+							asciideck_reader:set_position(ReaderPid, Ln),
+							lists:reverse(Acc)
+					end
+			end
+	end.
+
+%% Default tab size is 8. Tabs are expanded before the minimum
+%% indent is measured, so a tab and spaces agree on one column.
+%% A column is one Unicode code point, as in str.expandtabs.
+literal_text(Lines) ->
+	Expanded = [expand_tabs(Line, 0, <<>>) || Line <- Lines],
+	Min = lists:min([count_indent(Line) || Line <- Expanded]),
+	join_lines([strip_n(Line, Min) || Line <- Expanded]).
+
+expand_tabs(<<$\t, Rest/bits>>, Col, Acc) ->
+	N = 8 - (Col rem 8),
+	expand_tabs(Rest, Col + N, <<Acc/binary, (spaces(N))/binary>>);
+expand_tabs(<<C/utf8, Rest/bits>>, Col, Acc) ->
+	expand_tabs(Rest, Col + 1, <<Acc/binary, C/utf8>>);
+expand_tabs(<<C, Rest/bits>>, Col, Acc) ->
+	expand_tabs(Rest, Col + 1, <<Acc/binary, C>>);
+expand_tabs(<<>>, _, Acc) ->
+	Acc.
+
+spaces(N) ->
+	binary:copy(<<" ">>, N).
+
+count_indent(<<$\s, Rest/bits>>) ->
+	1 + count_indent(Rest);
+count_indent(_) ->
+	0.
+
+strip_n(<<$\s, Rest/bits>>, N) when N > 0 ->
+	strip_n(Rest, N - 1);
+strip_n(Line, _) ->
+	Line.
+
+join_lines([Line]) ->
+	Line;
+join_lines([Line|Rest]) ->
+	<<Line/binary, $\n, (join_lines(Rest))/binary>>.
+
+-ifdef(TEST).
+literal_para_test() ->
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"Consul *necessitatibus* per id,">>, _}]
+		= parse(<<"  Consul *necessitatibus* per id,">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"Consul *necessitatibus* per id,\n"
+		  "consetetur, eu pro everti postulant\n"
+		  "homero verear ea mea, qui.">>, _}] = parse(<<
+			"  Consul *necessitatibus* per id,\n"
+			"  consetetur, eu pro everti postulant\n"
+			"  homero verear ea mea, qui.">>),
+	%% Tabs also count as indentation.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>}, <<"Hello!">>, _}]
+		= parse(<<"\tHello!">>),
+	%% Relative indentation is preserved, including a shorter later line.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo() ->\n    ok.">>, _}] = parse(<<
+			"  foo() ->\n"
+			"      ok.">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"  foo\nbar\n  baz">>, _}] = parse(<<
+			"    foo\n"
+			"  bar\n"
+			"    baz">>),
+	%% A tab advances to the next column that is a multiple of 8.
+	%% Eight spaces and a tab are the same indent. A tab after
+	%% four spaces also stops at column 8.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo\n    bar">>, _}] = parse(<<
+			"\tfoo\n"
+			"\t    bar">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo\nbar">>, _}] = parse(<<
+			"\tfoo\n"
+			"        bar">>),
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"foo\nbar">>, _}] = parse(<<
+			"    \tfoo\n"
+			"        bar">>),
+	%% A tab in the text also stops at the next column.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"a     b">>, _}] = parse(<<"  a\tb">>),
+	%% The column is a code point. U+00E9 is two bytes; the tab
+	%% is at column 6 and expands to two spaces.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"caf", 195, 169, "  X">>, _}] = parse(<<
+			"  caf", 195, 169, "\tX">>),
+	%% U+20AC is three bytes. The tab is at column 2.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<226, 130, 172, "      X">>, _}] = parse(<<
+			" ", 226, 130, 172, "\tX">>),
+	%% Indented // and + are literal text, not comments or continuations.
+	[{literal_paragraph, #{<<"subs">> := <<"verbatim">>},
+		<<"x = 1\n// increment\nx = x + 1\n+">>, _}] = parse(<<
+			"  x = 1\n"
+			"  // increment\n"
+			"  x = x + 1\n"
+			"  +">>),
+	%% A non-indented line starts a new paragraph.
+	[
+		{literal_paragraph, _, <<"Hello!">>, _},
+		{paragraph, _, <<"World!">>, _}
+	] = parse(<<"  Hello!\nWorld!">>),
+	%% Must actually be indented.
+	?NOT(literal_paragraph, parse(<<"Hello!">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 15.4
--spec admonition_para(_) -> no_return().
-admonition_para(St) -> throw({not_implemented, St}). %% @todo
+admonition_para(St) ->
+	Line0 = read_line(St),
+	Ann = ann(St),
+	{Style, Para0} = admonition_style(Line0),
+	Para1 = trim(Para0),
+	%% Admonition paragraphs end like normal paragraphs.
+	Para = read_while(St, fun fold_para/1, Para1),
+	{admonition, #{style => Style}, Para, Ann}.
+
+admonition_style(<<"NOTE:", C, R/bits>>) when ?IS_WS(C) -> {<<"NOTE">>, R};
+admonition_style(<<"TIP:", C, R/bits>>) when ?IS_WS(C) -> {<<"TIP">>, R};
+admonition_style(<<"IMPORTANT:", C, R/bits>>) when ?IS_WS(C) -> {<<"IMPORTANT">>, R};
+admonition_style(<<"WARNING:", C, R/bits>>) when ?IS_WS(C) -> {<<"WARNING">>, R};
+admonition_style(<<"CAUTION:", C, R/bits>>) when ?IS_WS(C) -> {<<"CAUTION">>, R}.
+
+-ifdef(TEST).
+admonition_para_test() ->
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}]
+		= parse(<<"NOTE: This is a note.">>),
+	[{admonition, #{style := <<"TIP">>}, <<"This is a tip.">>, _}]
+		= parse(<<"TIP: This is a tip.">>),
+	[{admonition, #{style := <<"IMPORTANT">>}, <<"This is important.">>, _}]
+		= parse(<<"IMPORTANT: This is important.">>),
+	[{admonition, #{style := <<"WARNING">>}, <<"This is a warning.">>, _}]
+		= parse(<<"WARNING: This is a warning.">>),
+	[{admonition, #{style := <<"CAUTION">>}, <<"This is a caution.">>, _}]
+		= parse(<<"CAUTION: This is a caution.">>),
+	%% Extra whitespace after the prefix is trimmed.
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}]
+		= parse(<<"NOTE:   This is a note.">>),
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.">>, _}]
+		= parse(<<"NOTE:\tThis is a note.">>),
+	%% Multi-line paragraph body.
+	[{admonition, #{style := <<"NOTE">>}, <<"This is a note.\nIt spans two lines.">>, _}]
+		= parse(<<"NOTE: This is a note.\nIt spans two lines.">>),
+	%% A space after the colon is required.
+	?NOT(admonition, parse(<<"NOTE:This is a note.">>)),
+	%% The style must be uppercase and hard against the left margin.
+	?NOT(admonition, parse(<<"Note: This is a note.">>)),
+	?NOT(admonition, parse(<<"note: This is a note.">>)),
+	?NOT(admonition, parse(<<" NOTE: This is a note.">>)),
+	?NOT(admonition, parse(<<"NOTES: This is a note.">>)),
+	ok.
+-endif.
 
 %% Asciidoc User Guide 15.1
 para(St) ->
 	%% Paragraph must be hard against the left margin.
 	<<C, _/bits>> = Para0 = read_line(St),
 	Ann = ann(St),
-	%% @todo Uncomment this line once everything else has been implemented.
-	_ = ?IS_WS(C), % false = ?IS_WS(C),
+	false = ?IS_WS(C),
 	Para1 = trim(Para0),
 	%% Paragraph ends at blank line, end of file or start of delimited block or list.
 	Para = read_while(St, fun fold_para/1, Para1),
@@ -1019,12 +2561,77 @@ para(St) ->
 fold_para(eof) ->
 	done;
 fold_para(Line) ->
+	case ends_paragraph(Line) of
+		true -> done;
+		false -> {more, Line}
+	end.
+
+%% Asciidoc User Guide 15.1: blank line, end of file, delimited
+%% block, or list. An attribute list does too, so [NOTE] can
+%% follow the previous paragraph. Comment lines already did.
+ends_paragraph(Line) ->
 	case trim(Line) of
-		<<>> -> done;
-		<<"+">> -> done;
-		<<"//", _/bits>> -> done;
-		%% @todo Detect delimited block or list.
-		_ -> {more, Line}
+		<<>> -> true;
+		<<"+">> -> true;
+		<<"//", _/bits>> -> true;
+		_ ->
+			attribute_list_line(Line)
+				orelse delimited_line(Line)
+				orelse list_line(Line)
+	end.
+
+attribute_list_line(<<$[, Rest/bits>>) ->
+	case trim(Rest) of
+		<<>> -> false;
+		Trimmed -> binary:last(Trimmed) =:= $]
+	end;
+attribute_list_line(_) ->
+	false.
+
+delimited_line(Line0) ->
+	Line = trim(Line0, trailing),
+	case Line of
+		<<"--">> ->
+			true;
+		<<$|, $=, $=, $=, Rest/bits>> ->
+			same_char(Rest, $=);
+		<<C, C, C, C, Rest/bits>> when C =:= $-; C =:= $.; C =:= $*;
+				C =:= $/; C =:= $+; C =:= $_; C =:= $= ->
+			same_char(Rest, C);
+		_ ->
+			false
+	end.
+
+same_char(<<>>, _) ->
+	true;
+same_char(<<C, Rest/bits>>, C) ->
+	same_char(Rest, C);
+same_char(<<_, _/bits>>, _) ->
+	false.
+
+list_line(Line0) ->
+	Line = trim(Line0),
+	case Line of
+		<<"-", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"*", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"**", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"***", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"****", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"*****", C, _/bits>> when ?IS_WS(C) -> true;
+		<<".", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"..", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"...", C, _/bits>> when ?IS_WS(C) -> true;
+		<<"....", C, _/bits>> when ?IS_WS(C) -> true;
+		<<".....", C, _/bits>> when ?IS_WS(C) -> true;
+		_ ->
+			labeled_line(Line) orelse is_callout_line(Line0)
+	end.
+
+labeled_line(Line) ->
+	try find_labeled_list(Line) of
+		{Label, _, _} -> trim(Label) =/= <<>>
+	catch _:_ ->
+		false
 	end.
 
 -ifdef(TEST).
@@ -1086,21 +2693,55 @@ skip(Parse, St=#state{reader=ReaderPid}) ->
 read_line(#state{reader=ReaderPid}) ->
 	asciideck_reader:read_line(ReaderPid).
 
-read_while(St=#state{reader=ReaderPid}, F, Acc) ->
+read_while(St, F, Acc) ->
+	read_while(St, F, Acc, drop).
+
+read_while(St, F, Acc, Keep) ->
+	do_read_while(St, F, start_acc(Acc), Keep).
+
+do_read_while(St=#state{reader=ReaderPid}, F, Acc, Keep) ->
 	Ln = asciideck_reader:get_position(ReaderPid),
 	case F(read_line(St)) of
 		done ->
 			asciideck_reader:set_position(ReaderPid, Ln),
-			Acc;
+			finish_lines(Acc);
 		{more, Line} ->
-			case Acc of
-				<<>> -> read_while(St, F, Line);
-				_ -> read_while(St, F, <<Acc/binary, $\n, Line/binary>>)
-			end
+			do_read_while(St, F, append_line(Acc, Line, Keep), Keep)
 	end.
 
-ann(#state{reader=ReaderPid}) ->
-	#{line => asciideck_reader:get_position(ReaderPid)}.
+%% <<>> means both "nothing read" and "an empty line", so the
+%% accumulator uses none until the first line is kept. drop still
+%% throws away leading empty lines. keep remembers them and emits
+%% one leading newline per empty line once real text follows.
+start_acc(<<>>) ->
+	none;
+start_acc(Acc) ->
+	Acc.
+
+append_line(none, <<>>, drop) ->
+	none;
+append_line(none, <<>>, keep) ->
+	{pending, 1};
+append_line(none, Line, _) ->
+	Line;
+append_line({pending, N}, <<>>, keep) ->
+	{pending, N + 1};
+append_line({pending, N}, Line, _) ->
+	<<(binary:copy(<<$\n>>, N))/binary, Line/binary>>;
+append_line(Acc, Line, _) when is_binary(Acc) ->
+	<<Acc/binary, $\n, Line/binary>>.
+
+finish_lines(none) ->
+	<<>>;
+finish_lines({pending, _}) ->
+	<<>>;
+finish_lines(Bin) when is_binary(Bin) ->
+	Bin.
+
+%% The reader position is the next line to be read.
+%% line_offset shifts a nested slice back onto the file line.
+ann(#state{reader=ReaderPid, line_offset=Offset}) ->
+	#{line => asciideck_reader:get_position(ReaderPid) - 1 + Offset}.
 
 trim(Line) ->
 	trim(Line, both).
