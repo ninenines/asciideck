@@ -80,6 +80,7 @@ ast_node(Node={Type, _, _, _}) ->
 			listing_block -> listing_block(Node);
 			open_block -> open_block(Node);
 			sidebar_block -> sidebar_block(Node);
+			quote_block -> quote_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);
@@ -155,6 +156,68 @@ sidebar_block({sidebar_block, Attrs, Children, _}) ->
 		end,
 		ast(Children)
 	].
+
+%% Quote and verse blocks.
+
+quote_block({quote_block, Attrs, Body, _}) ->
+	case quote_style(Attrs) of
+		<<"verse">> ->
+			[
+				man_block_title(Attrs),
+				".nf\n", inline(Body), "\n.fi\n",
+				man_attribution(Attrs)
+			];
+		_ ->
+			[
+				man_block_title(Attrs),
+				ast(Body),
+				man_attribution(Attrs)
+			]
+	end.
+
+%% Positional attribute 1 is the style when that key was written.
+%% Otherwise the named style attribute is. The default is quote.
+quote_style(Attrs) ->
+	case maps:is_key(1, Attrs) of
+		true ->
+			maps:get(1, Attrs);
+		false ->
+			maps:get(<<"style">>, Attrs, <<"quote">>)
+	end.
+
+man_block_title(#{<<"title">> := Title}) ->
+	[".PP\n\\fB", inline(Title), "\\fR\n"];
+man_block_title(_) ->
+	[].
+
+man_attribution(Attrs) ->
+	Cite = man_quote_value(Attrs, 3, <<"citetitle">>),
+	Author = man_quote_value(Attrs, 2, <<"attribution">>),
+	case {Cite, Author} of
+		{none, none} ->
+			[];
+		{Cite, none} ->
+			[".PP\n\\fI", inline(Cite), "\\fR\n"];
+		{none, Author} ->
+			[".PP\n\\(em ", inline(Author), "\n"];
+		{Cite, Author} ->
+			[".PP\n\\fI", inline(Cite), "\\fR\n.br\n\\(em ", inline(Author), "\n"]
+	end.
+
+%% A positional attribute is written over a named one.
+man_quote_value(Attrs, Pos, Name) ->
+	case maps:is_key(Pos, Attrs) of
+		true ->
+			case maps:get(Pos, Attrs) of
+				<<>> -> none;
+				Value -> Value
+			end;
+		false ->
+			case maps:get(Name, Attrs, <<>>) of
+				<<>> -> none;
+				Value -> Value
+			end
+	end.
 
 %% Listing blocks.
 

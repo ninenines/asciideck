@@ -1172,8 +1172,363 @@ passthrough_block_test() ->
 -endif.
 
 %% Asciidoc User Guide 16.7
-quote_block(St) ->
-	delimited_block(St, quote_block, $_).
+%%
+%% Quote style is a section body, same as a sidebar, so a line of
+%% underscores inside a nested block stays there. Verse is not:
+%% the first line of four or more underscores ends it, even inside
+%% what would have been a listing. The style is the attribute list
+%% already read above the opener.
+quote_block(St=#state{reader=ReaderPid}) ->
+	Four = <<$_, $_, $_, $_>>,
+	<<Four:4/binary, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	repeats(trim(Line0, trailing), $_),
+	BodyPos = asciideck_reader:get_position(ReaderPid),
+	Verse = verse_before(ReaderPid, BodyPos),
+	asciideck_reader:set_position(ReaderPid, BodyPos),
+	case Verse of
+		true ->
+			verse_quote(St, Ann);
+		false ->
+			section_quote(St, Ann, BodyPos)
+	end.
+
+%% Verse keeps every line up to the closer. Children are not blocks.
+verse_quote(St, Ann) ->
+	Raw = read_while(St, fun fold_verse/1, <<>>, keep),
+	_ = read_line(St),
+	{quote_block, #{}, [], Ann#{raw => Raw}}.
+
+fold_verse(eof) ->
+	done;
+fold_verse(Line) ->
+	case verse_closer(Line) of
+		true -> done;
+		false -> {more, Line}
+	end.
+
+verse_closer(Line0) when is_binary(Line0) ->
+	Four = <<$_, $_, $_, $_>>,
+	case Line0 of
+		<<Four:4/binary, Line1/bits>> ->
+			try repeats(trim(Line1, trailing), $_) of
+				_ -> true
+			catch _:_ ->
+				false
+			end;
+		_ ->
+			false
+	end;
+verse_closer(_) ->
+	false.
+
+%% Start is the first body line. A closer has been read when
+%% the body returns, so that line is End - 1.
+section_quote(St=#state{reader=ReaderPid}, Ann, Start) ->
+	{Children, Closed} = quote_body(St),
+	End = asciideck_reader:get_position(ReaderPid),
+	Last = case Closed of
+		true -> End - 2;
+		false -> End - 1
+	end,
+	Raw = read_span(ReaderPid, Start, Last),
+	{quote_block, #{}, Children, Ann#{raw => Raw}}.
+
+%% Positional attribute 1 on the lists above this opener.
+%% The closest list wins. Titles, ids, attribute entries,
+%% comment lines, and comment blocks do not consume the list.
+verse_before(Pid, BodyPos) ->
+	%% Walked upward, so the closest list is last and wins.
+	Attrs = lookback_attrs(Pid, BodyPos - 2, []),
+	Merged = lists:foldl(fun(A, Acc) -> merge_quote_attrs(Acc, A) end,
+		#{}, Attrs),
+	quote_style(Merged) =:= <<"verse">>.
+
+%% An empty positional value is unset. In that same list it hides
+%% the named attribute for the position. It does not clear a value
+%% written in another list. A non-empty positional still wins.
+merge_quote_attrs(Earlier, Closer) ->
+	maps:merge(prepare_quote_attrs(Earlier), prepare_quote_attrs(Closer)).
+
+prepare_quote_attrs(Attrs) ->
+	Attrs1 = suppress_named(Attrs, 1, <<"style">>),
+	Attrs2 = suppress_named(Attrs1, 2, <<"attribution">>),
+	Attrs3 = suppress_named(Attrs2, 3, <<"citetitle">>),
+	drop_empty_pos(Attrs3).
+
+suppress_named(Attrs, Pos, Name) ->
+	case maps:get(Pos, Attrs, undefined) of
+		<<>> -> maps:remove(Name, Attrs);
+		_ -> Attrs
+	end.
+
+drop_empty_pos(Attrs) ->
+	maps:filter(fun
+		(Key, <<>>) when is_integer(Key), Key > 0 -> false;
+		(_, _) -> true
+	end, Attrs).
+
+%% Positional attribute 1 is the style when that key was written,
+%% even if a named style was written too. Otherwise the named
+%% style is used. The default style is quote.
+quote_style(Attrs) ->
+	case maps:is_key(1, Attrs) of
+		true ->
+			maps:get(1, Attrs);
+		false ->
+			maps:get(<<"style">>, Attrs, <<"quote">>)
+	end.
+
+lookback_attrs(_Pid, Line, Acc) when Line < 1 ->
+	Acc;
+lookback_attrs(Pid, Line, Acc) ->
+	asciideck_reader:set_position(Pid, Line),
+	case asciideck_reader:read_line(Pid) of
+		eof ->
+			Acc;
+		Text ->
+			%% A space-plus entry owns this line, whatever it looks like.
+			case attr_continuation(Pid, Line) of
+				true ->
+					lookback_attrs(Pid, Line - 1, Acc);
+				false ->
+					case look_line(trim(Text, trailing)) of
+						blank ->
+							lookback_attrs(Pid, Line - 1, Acc);
+						skip ->
+							lookback_attrs(Pid, Line - 1, Acc);
+						{attr, Attrs} ->
+							lookback_attrs(Pid, Line - 1, [Attrs|Acc]);
+						comment_block ->
+							skip_comment_block(Pid, Line - 1, Acc);
+						stop ->
+							Acc
+					end
+			end
+	end.
+
+%% The previous line is an attribute entry value that ends in " +",
+%% or a continuation of one. This line is part of that value.
+attr_continuation(Pid, Line) when Line > 1 ->
+	consumes_next(Pid, Line - 1);
+attr_continuation(_, _) ->
+	false.
+
+consumes_next(Pid, Line) when Line >= 1 ->
+	asciideck_reader:set_position(Pid, Line),
+	case asciideck_reader:read_line(Pid) of
+		eof ->
+			false;
+		Text0 ->
+			Text = trim(Text0, trailing),
+			case ends_plus(Text) of
+				true ->
+					entry_line(Text) orelse consumes_next(Pid, Line - 1);
+				false ->
+					false
+			end
+	end;
+consumes_next(_, _) ->
+	false.
+
+ends_plus(Text) ->
+	Len = byte_size(Text),
+	case Len >= 2 of
+		true ->
+			PrefixLen = Len - 2,
+			case Text of
+				<<_:PrefixLen/binary, $\s, $+>> -> true;
+				_ -> false
+			end;
+		false ->
+			false
+	end.
+
+%% The delimiter above the quote is the closer. The opener is
+%% further up. Lines inside the block are not attributes.
+skip_comment_block(_Pid, Line, Acc) when Line < 1 ->
+	Acc;
+skip_comment_block(Pid, Line, Acc) ->
+	asciideck_reader:set_position(Pid, Line),
+	case asciideck_reader:read_line(Pid) of
+		eof ->
+			Acc;
+		Text ->
+			case comment_kind(trim(Text, trailing)) of
+				block ->
+					lookback_attrs(Pid, Line - 1, Acc);
+				_ ->
+					skip_comment_block(Pid, Line - 1, Acc)
+			end
+	end.
+
+look_line(<<>>) ->
+	blank;
+look_line(Line) ->
+	case comment_kind(Line) of
+		line ->
+			skip;
+		block ->
+			comment_block;
+		false ->
+			case block_id_line(Line) of
+				true ->
+					skip;
+				false ->
+					look_line1(Line)
+			end
+	end.
+
+%% // and //text are comment lines. //// is a comment block.
+comment_kind(<<"//", Rest/bits>>) ->
+	case slash_run(Rest) andalso byte_size(Rest) >= 2 of
+		true -> block;
+		false -> line
+	end;
+comment_kind(_) ->
+	false.
+
+slash_run(<<>>) ->
+	true;
+slash_run(<<$/, Rest/bits>>) ->
+	slash_run(Rest);
+slash_run(_) ->
+	false.
+
+look_line1(<<$[, _/bits>> = Line) ->
+	case attribute_list_line(Line) of
+		true ->
+			%% A list this parser rejects is its own paragraph.
+			%% The failure must not abandon the quote delimiter.
+			try
+				{attr, parse_attr_line(Line)}
+			catch _:_ ->
+				stop
+			end;
+		false ->
+			stop
+	end;
+look_line1(Line) ->
+	%% Four or more dots is a literal delimiter, not a block title.
+	case delimited_line(Line) of
+		true ->
+			stop;
+		false ->
+			case entry_line(Line) orelse title_line(Line) of
+				true -> skip;
+				false -> stop
+			end
+	end.
+
+block_id_line(<<"[[", Rest/bits>>) ->
+	try
+		Line = trim(Rest),
+		Len = byte_size(Line) - 2,
+		<<ID:Len/binary, "]]">> = Line,
+		{ID, <<>>} = while(fun(C) ->
+			(C =/= $,) andalso (C =/= $[) andalso (C =/= $])
+			andalso (C =/= $\s) andalso (C =/= $\t)
+		end, ID),
+		true
+	catch _:_ ->
+		false
+	end;
+block_id_line(_) ->
+	false.
+
+parse_attr_line(Line) ->
+	<<$[, Rest0/bits>> = Line,
+	Rest1 = trim(Rest0),
+	Len = byte_size(Rest1) - 1,
+	<<Body:Len/binary, $]>> = Rest1,
+	asciideck_attributes_parser:parse(Body).
+
+entry_line(<<$:, Line/bits>>) ->
+	case while(fun(C) -> C =/= $: end, Line) of
+		{Name, <<$:, _/bits>>} when Name =/= <<>> ->
+			sanitize_attr_name(Name) =/= <<>>;
+		_ ->
+			false
+	end;
+entry_line(_) ->
+	false.
+
+%% `.Notes` is a block title. `. Notes` is a list item.
+title_line(<<$., C, _/bits>>) when ?IS_WS(C) ->
+	false;
+title_line(<<$., _/bits>>) ->
+	true;
+title_line(_) ->
+	false.
+
+quote_body(St) ->
+	skip(fun empty_line/1, St),
+	case quote_closer(St) of
+		true ->
+			{[], true};
+		false ->
+			case drop_sidebar_title(St) of
+				true ->
+					quote_body(St);
+				false ->
+					quote_child(St)
+			end
+	end.
+
+quote_child(St) ->
+	case block(St) of
+		eof ->
+			{[], false};
+		%% `==` followed by a blank line is an empty title.
+		%% The marker is text. A non-empty title was already dropped.
+		{section_title, #{level := Level}, <<>>, Ann} ->
+			Marker = binary:copy(<<"=">>, Level + 1),
+			{Rest, Closed} = quote_body(St),
+			{[{paragraph, #{}, Marker, Ann}|Rest], Closed};
+		{section_title, _, _, _} ->
+			quote_body(St);
+		Child ->
+			{Rest, Closed} = quote_body(St),
+			{[Child|Rest], Closed}
+	end.
+
+%% Leave the reader unmoved when this line is not the closer.
+quote_closer(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		Four = <<$_, $_, $_, $_>>,
+		<<Four:4/binary, Line0/bits>> = read_line(St),
+		repeats(trim(Line0, trailing), $_),
+		true
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
+
+%% Body lines from Start through Last, inclusive. The reader
+%% is put back on the line after the quote.
+read_span(_, Start, Last) when Last < Start ->
+	<<>>;
+read_span(Pid, Start, Last) ->
+	Pos = asciideck_reader:get_position(Pid),
+	asciideck_reader:set_position(Pid, Start),
+	try take_lines(Pid, Last - Start + 1, [])
+	after asciideck_reader:set_position(Pid, Pos)
+	end.
+
+take_lines(_, 0, []) ->
+	<<>>;
+take_lines(_, 0, Acc) ->
+	join_lines(lists:reverse(Acc));
+take_lines(Pid, N, Acc) ->
+	case asciideck_reader:read_line(Pid) of
+		eof when Acc =:= [] ->
+			<<>>;
+		eof ->
+			join_lines(lists:reverse(Acc));
+		Line ->
+			take_lines(Pid, N - 1, [Line|Acc])
+	end.
 
 -ifdef(TEST).
 quote_block_test() ->
@@ -1186,10 +1541,295 @@ quote_block_test() ->
 		"out of the window. \"A nice little brougham and a pair of\n"
 		"beauties. A hundred and fifty guineas apiece. There's money in\n"
 		"this case, Watson, if there is nothing else.\"">>,
-	[{quote_block, _, Block, _}] = parse(<<
+	[{quote_block, _, [
+		{paragraph, _, <<
+			"As he spoke there was the sharp sound of horses' hoofs and\n"
+			"grating wheels against the curb, followed by a sharp pull at the\n"
+			"bell. Holmes whistled."
+		>>, _},
+		{paragraph, _, <<
+			"\"A pair, by the sound,\" said he. \"Yes,\" he continued, glancing\n"
+			"out of the window. \"A nice little brougham and a pair of\n"
+			"beauties. A hundred and fifty guineas apiece. There's money in\n"
+			"this case, Watson, if there is nothing else.\""
+		>>, _}
+	], #{raw := Block}}] = parse(<<
 		"____________________________________________________________________\n",
 		Block/binary, "\n"
 		"____________________________________________________________________\n">>),
+	%% A line of four bytes is not a quote.
+	[{paragraph, _, <<"code">>, _}] = parse(<<"code\n">>),
+	[{paragraph, _, <<"____text">>, _}] = parse(<<"____text\n">>),
+	%% The inner delimiter ends the outer quote.
+	[
+		{quote_block, _, [{paragraph, _, <<"outer">>, _}], _},
+		{paragraph, _, <<"inner">>, _},
+		{quote_block, _, [], _}
+	] = parse(<<
+		"____\n"
+		"outer\n"
+		"\n"
+		"____\n"
+		"inner\n"
+		"____\n"
+		"____\n">>),
+	%% Underscores inside a nested block do not end the quote.
+	[{quote_block, _, [
+		{paragraph, _, <<"Intro paragraph is long enough.">>, _},
+		{listing_block, _, <<"____\ncode">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"Intro paragraph is long enough.\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n">>),
+	%% A section title is not a section body element.
+	[{quote_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"____\n">>),
+	[{quote_block, _, [
+		{paragraph, _, <<"before\n== Not a title\nafter">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"before\n"
+		"== Not a title\n"
+		"after\n"
+		"____\n">>),
+	%% A title at the next block is dropped with no blank line.
+	[{quote_block, _, [
+		{paragraph, _, <<"para">>, _},
+		{paragraph, _, <<"still">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"para\n"
+		"\n"
+		"== Title\n"
+		"still\n"
+		"____\n">>),
+	%% A marker with no title text stays text.
+	[{quote_block, _, [
+		{paragraph, _, <<"==">>, _},
+		{paragraph, _, <<"body">>, _}
+	], _}] = parse(<<
+		"____\n"
+		"== \n"
+		"\n"
+		"body\n"
+		"____\n">>),
+	[{quote_block, _, [
+		{block_macro, #{name := <<"image">>, target := <<"logo.png">>}, <<>>, _}
+	], _}] = parse(<<
+		"____\n"
+		"image::logo.png[Logo]\n"
+		"____\n">>),
+	%% A closer on the next line still belongs to the quote.
+	[{quote_block, _, [{paragraph, _, <<"Hi.">>, _}], _},
+		{paragraph, _, <<"After">>, _}] = parse(<<
+		"____\n"
+		"Hi.\n"
+		"____\n"
+		"After\n">>),
+	%% An indented line of underscores is not a closer.
+	[{quote_block, _, [{paragraph, _, <<"Hi.\n ____">>, _}], _}] = parse(<<
+		"____\n"
+		"Hi.\n"
+		" ____\n"
+		"____\n">>),
+	%% Verse ends at the first underscore line, even inside a listing.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"intro\n\n----">>}} | _] = parse(<<
+		"[verse]\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n">>),
+	%% The closest attribute list sets the style.
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"line">>}}] = parse(<<
+		"[quote, Ann, Book]\n"
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _} | _] = parse(<<
+		"[verse]\n"
+		"[quote, Ann, Book]\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{block_title, _, <<"Title">>, _},
+		{quote_block, _, [], #{raw := <<"line">>}} | _] = parse(<<
+		"[verse]\n"
+		".Title\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% A blank line does not detach the style from the opener.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"line">>}} | _] = parse(<<
+		"[verse]\n"
+		"\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% A comment does not consume the style.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{comment_line, _, <<"comment">>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[verse]\n"
+		"// comment\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{comment_line, _, <<"c">>, _},
+		{quote_block, _, [{paragraph, _, <<"Words.">>, _}], _}] = parse(<<
+		"[quote, Ann, Book]\n"
+		"// c\n"
+		"____\n"
+		"Words.\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{comment_block, _, <<"hidden">>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[verse]\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	%% Named style is verse only when positional 1 was not written.
+	[{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{<<"style">> := <<"quote">>}, <<>>, _},
+		{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[style=\"quote\"]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{quote_block, _, [{paragraph, _, <<"one\ntwo">>, _}], _}] = parse(<<
+		"[quote, Ann, Book]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	%% A continued attribute entry does not hide the style.
+	%% The first underscore line still ends the verse.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_entry, #{name := <<"description">>},
+			<<"hello continued">>, _},
+		{quote_block, _, [], #{raw := <<"intro\n\n----">>}} | _] = parse(<<
+		"[verse]\n"
+		":description: hello +\n"
+		"continued\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n">>),
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_entry, #{name := <<"description">>},
+			<<"hello foo bar">>, _},
+		{quote_block, _, [], #{raw := <<"intro">>}}] = parse(<<
+		"[verse]\n"
+		":description: hello +\n"
+		"foo +\n"
+		"bar\n"
+		"____\n"
+		"intro\n"
+		"____\n">>),
+	%% A continuation that looks like an attribute list is entry text.
+	[{attribute_list, #{1 := <<"quote">>}, <<>>, _},
+		{attribute_entry, _, <<"bar [verse]">>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _}] = parse(<<
+		"[quote]\n"
+		":foo: bar +\n"
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% An empty positional style does not clear an earlier verse.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{attribute_list, #{2 := <<"Ann">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[verse]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	[{attribute_list, #{<<"style">> := <<"verse">>}, <<>>, _},
+		{attribute_list, #{2 := <<"Ann">>}, <<>>, _},
+		{quote_block, _, [], #{raw := <<"one\ntwo">>}}] = parse(<<
+		"[style=\"verse\"]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n">>),
+	%% A literal delimiter is not a title. The style belongs to the literal.
+	[{attribute_list, #{1 := <<"verse">>}, <<>>, _},
+		{literal_block, _, <<>>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _}] = parse(<<
+		"[verse]\n"
+		"....\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	[{literal_block, _, <<"[verse]">>, _},
+		{quote_block, _, [{paragraph, _, <<"line">>, _}], _}] = parse(<<
+		"....\n"
+		"[verse]\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n">>),
+	%% A list this parser rejects stays a paragraph. The delimiter still opens.
+	[{paragraph, _, <<"[quote, \"Ann]">>, _},
+		{quote_block, _, [{paragraph, _, <<"hello malformed">>, _}], _}] = parse(<<
+		"[quote, \"Ann]\n"
+		"____\n"
+		"hello malformed\n"
+		"____\n">>),
 	ok.
 -endif.
 

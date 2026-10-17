@@ -46,6 +46,8 @@ run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[open_style(Attrs, Children, Ann)|run(Tail)];
 run([{sidebar_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{sidebar_block, Attrs, run(Children), Ann}|run(Tail)];
+run([{quote_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{quote_block, Attrs, run(Children), Ann}|run(Tail)];
 run([{list, Attrs, Items, Ann}|Tail]) ->
 	[{list, Attrs, run(Items), Ann}|run(Tail)];
 run([{list_item, Attrs, Children, Ann}|Tail]) ->
@@ -221,6 +223,16 @@ sidebar_block_test() ->
 	], _}] = run([
 		{sidebar_block, #{}, [
 			{paragraph, #{1 => <<"NOTE">>}, <<"Careful.">>, #{line => 2}}
+		], #{line => 1}}
+	]),
+	ok.
+
+quote_block_test() ->
+	[{quote_block, _, [
+		{literal_paragraph, #{<<"subs">> := <<"verbatim">>}, <<"kept *stars*">>, _}
+	], _}] = run([
+		{quote_block, #{}, [
+			{paragraph, #{1 => <<"literal">>}, <<"kept *stars*">>, #{line => 2}}
 		], #{line => 1}}
 	]),
 	ok.

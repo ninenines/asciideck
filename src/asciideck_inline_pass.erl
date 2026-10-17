@@ -17,14 +17,29 @@
 -compile({no_auto_import, [link/2]}).
 
 -export([run/1]).
+-export([inline_verse/1]).
 
--import(asciideck_block_parser, [trim/1, while/2]).
+-import(asciideck_block_parser, [trim/1, trim/2, while/2]).
+
+%% Verse keeps line breaks. Normal text folds them into a space.
+-define(KEEP_NL, asciideck_inline_keep_nl).
 
 -type inline_ast() :: list(). %% @todo
 -export_type([inline_ast/0]).
 
 run([]) ->
 	[];
+%% Verse is the original lines, not the parsed children.
+%% A quote is a section body. Its raw lines are no longer needed.
+run([{quote_block, Attrs, Items, Ann}|Tail]) when is_list(Items) ->
+	case quote_style(Attrs) of
+		<<"verse">> ->
+			Text = verse_text(maps:get(raw, Ann, <<>>)),
+			[{quote_block, Attrs, inline_verse(Text),
+				maps:remove(raw, Ann)}|run(Tail)];
+		_ ->
+			[{quote_block, Attrs, run(Items), maps:remove(raw, Ann)}|run(Tail)]
+	end;
 run([Data|Tail]) when is_binary(Data) ->
 	[inline(Data)|run(Tail)];
 %% We do not do any inline formatting for verbatim blocks,
@@ -40,6 +55,83 @@ run([{Type, Attrs, Items, Ann}|Tail]) when is_list(Items) ->
 	[{Type, Attrs, run(Items), Ann}|run(Tail)];
 run([{Type, Attrs, Data, Ann}|Tail]) ->
 	[{Type, Attrs, inline(Data), Ann}|run(Tail)].
+
+%% Positional attribute 1 is the style when that key was written.
+%% Otherwise the named style attribute is. The default is quote.
+quote_style(Attrs) ->
+	case maps:is_key(1, Attrs) of
+		true ->
+			maps:get(1, Attrs);
+		false ->
+			maps:get(<<"style">>, Attrs, <<"quote">>)
+	end.
+
+%% A line of exactly // comments out the following line too.
+%% //text comments out only that line. A blank line remains
+%% where the comment was. Blanks at either end are dropped.
+%% /// is text. Trailing spaces on a content line are dropped.
+verse_text(Raw) ->
+	Lines = verse_lines(binary:split(Raw, <<"\n">>, [global]), []),
+	join_verse(drop_verse_blanks(Lines)).
+
+verse_lines([], Acc) ->
+	lists:reverse(Acc);
+verse_lines([Line0|Rest], Acc) ->
+	Line = trim(Line0, trailing),
+	case Line of
+		%% A backslash keeps the comment text. With nothing
+		%% after //, the next line is part of that text.
+		<<"\\//">> ->
+			case Rest of
+				[Next|More] ->
+					verse_lines(More, [trim(Next, trailing), <<"//">>|Acc]);
+				[] ->
+					verse_lines([], [<<"//">>|Acc])
+			end;
+		<<"\\//", C, Text/bits>> when C =/= $/ ->
+			verse_lines(Rest, [<<"//", C, Text/bits>>|Acc]);
+		_ ->
+			case verse_comment(Line) of
+				both ->
+					verse_lines(drop_verse_line(Rest), [<<>>|Acc]);
+				line ->
+					verse_lines(Rest, [<<>>|Acc]);
+				keep ->
+					verse_lines(Rest, [Line|Acc])
+			end
+	end.
+
+verse_comment(<<"//">>) ->
+	both;
+verse_comment(<<"//", C, _/bits>>) when C =/= $/ ->
+	line;
+verse_comment(_) ->
+	keep.
+
+drop_verse_line([_|Rest]) ->
+	Rest;
+drop_verse_line([]) ->
+	[].
+
+drop_verse_blanks(Lines) ->
+	lists:reverse(drop_verse_leading(lists:reverse(drop_verse_leading(Lines)))).
+
+drop_verse_leading([<<>>|Rest]) ->
+	drop_verse_leading(Rest);
+drop_verse_leading(Lines) ->
+	Lines.
+
+join_verse([]) ->
+	<<>>;
+join_verse(Lines) ->
+	iolist_to_binary(lists:join(<<"\n">>, Lines)).
+
+%% Verse keeps the line breaks that normal text would fold.
+inline_verse(Data) ->
+	put(?KEEP_NL, true),
+	try inline(Data)
+	after erase(?KEEP_NL)
+	end.
 
 %% We reduce inline content with a single text element
 %% with no formatting to a simple binary.
@@ -92,13 +184,26 @@ parsers(Mark, Eol, Spans) ->
 		fun(Bin, _) -> line_break(Bin, Eol) end
 	].
 
+nl_char() ->
+	case get(?KEEP_NL) of
+		true -> <<$\n>>;
+		_ -> <<$\s>>
+	end.
+
+nl_mark() ->
+	case get(?KEEP_NL) of
+		true -> $\n;
+		_ -> $\s
+	end.
+
 %% The inline pass replaces \r\n and \n with a simple space
-%% when it occurs within normal text.
+%% when it occurs within normal text. Verse keeps the break,
+%% including inside a quote that spans lines.
 oneof(<<$\r, $\n, Rest/bits>>, BinAcc, Acc, _, Eol, Spans, []) ->
-	inline(Rest, <<BinAcc/binary, $\s>>, Acc, $\s, Eol,
+	inline(Rest, <<BinAcc/binary, (nl_char())/binary>>, Acc, nl_mark(), Eol,
 		shift_spans(Spans, 2));
 oneof(<<$\n, Rest/bits>>, BinAcc, Acc, _, Eol, Spans, []) ->
-	inline(Rest, <<BinAcc/binary, $\s>>, Acc, $\s, Eol,
+	inline(Rest, <<BinAcc/binary, (nl_char())/binary>>, Acc, nl_mark(), Eol,
 		shift_spans(Spans, 1));
 oneof(<<C/utf8, Rest/bits>>, BinAcc, Acc, _, Eol, Spans, []) ->
 	inline(Rest, <<BinAcc/binary, C/utf8>>, Acc, C, Eol,
@@ -1466,22 +1571,28 @@ inline_literal_passthrough_test() ->
 %% trailing CR left from a CRLF line. Quote bodies do
 %% not, so a constrained quote may end in " +".
 line_break(<<WS, "+", Rest0/bits>>, EolFlag) when ?IS_WS(WS) ->
-	{Eol, Rest} = case while(fun(C) ->
+	{Eol, Break, Rest} = case while(fun(C) ->
 		(C =/= $\r) andalso (C =/= $\n)
 	end, Rest0) of
 		{Eol0, <<"\r\n", Rest1/bits>>} ->
-			{Eol0, Rest1};
+			{Eol0, <<"\n">>, Rest1};
 		{Eol0, <<"\n", Rest1/bits>>} ->
-			{Eol0, Rest1};
+			{Eol0, <<"\n">>, Rest1};
 		{Eol0, <<"\r">>} when EolFlag ->
-			{Eol0, <<>>};
+			{Eol0, <<>>, <<>>};
 		{Eol0, <<>>} when EolFlag ->
-			{Eol0, <<>>};
+			{Eol0, <<>>, <<>>};
 		_ ->
 			error(nomatch)
 	end,
 	<<>> = trim(Eol),
-	{ok, {line_break, #{}, <<>>, inline}, Rest}.
+	%% Verse is preformatted. The break is an extra <br />,
+	%% and the line break itself stays in the text.
+	Kept = case get(?KEEP_NL) of
+		true -> <<Break/binary, Rest/binary>>;
+		_ -> Rest
+	end,
+	{ok, {line_break, #{}, <<>>, inline}, Kept}.
 
 -ifdef(TEST).
 line_break_test() ->
@@ -1514,5 +1625,48 @@ line_break_test() ->
 		<<"line one line two">>,
 		{line_break, #{}, <<>>, _}
 	] = inline(<<"line one\r\nline two +\r">>),
+	ok.
+
+quote_verse_test() ->
+	[{strong, _, <<"bold still">>, _}] = inline(<<"*bold\nstill*">>),
+	[{strong, _, <<"bold\nstill">>, _}]
+		= inline_verse(<<"*bold\nstill*">>),
+	<<"*bold\n*">> = inline_verse(<<"*bold\n*">>),
+	<<"one\n\ntwo">> = verse_text(<<"\none\n// hidden\ntwo\n\n">>),
+	<<"one\n\nthree">> = verse_text(<<"one\n//\ntwo\nthree">>),
+	<<"one\n\nthree">> = verse_text(<<"one\n//   \ntwo\nthree">>),
+	<<"one\n/// text\ntwo">> = verse_text(<<"one\n/// text\ntwo">>),
+	<<"one\n//\n// hidden\nthree">> = verse_text(<<"one\n\\//\n// hidden\nthree">>),
+	<<"// hidden">> = verse_text(<<"\\// hidden">>),
+	[<<"one">>, {line_break, _, _, _}, <<"\ntwo">>]
+		= inline_verse(<<"one +\ntwo">>),
+	<<"  indented\ntail">> = verse_text(<<"\n  indented\ntail  \n">>),
+	<<"line\n\n.Title">> = verse_text(<<"\nline\n\n.Title\n">>),
+	[{quote_block, #{1 := <<"verse">>}, <<"one\n\ntwo">>, Ann}] = run([
+		{quote_block, #{1 => <<"verse">>}, [
+			{paragraph, #{}, <<"ignored">>, #{}}
+		], #{raw => <<"one\n// hidden\ntwo">>}}
+	]),
+	false = maps:is_key(raw, Ann),
+	[{quote_block, #{}, [
+		{paragraph, #{}, [{strong, _, <<"world">>, _}], _}
+	], NoRaw}] = run([
+		{quote_block, #{}, [
+			{paragraph, #{}, <<"*world*">>, #{}}
+		], #{raw => <<"unused">>}}
+	]),
+	false = maps:is_key(raw, NoRaw),
+	[{quote_block, #{<<"style">> := <<"verse">>}, <<"one\ntwo">>, _}] = run([
+		{quote_block, #{<<"style">> => <<"verse">>}, [],
+			#{raw => <<"one\ntwo">>}}
+	]),
+	[{quote_block, #{1 := <<"quote">>}, [
+		{paragraph, #{}, <<"words">>, _}
+	], NoRaw2}] = run([
+		{quote_block, #{1 => <<"quote">>, <<"style">> => <<"verse">>}, [
+			{paragraph, #{}, <<"words">>, #{}}
+		], #{raw => <<"one\ntwo">>}}
+	]),
+	false = maps:is_key(raw, NoRaw2),
 	ok.
 -endif.

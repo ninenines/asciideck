@@ -76,6 +76,7 @@ ast_node(Node={Type, _, _, _}) ->
 			passthrough_block -> passthrough_block(Node);
 			open_block -> open_block(Node);
 			sidebar_block -> sidebar_block(Node);
+			quote_block -> quote_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);
@@ -218,6 +219,80 @@ sidebar_block({sidebar_block, Attrs, Children, _}) ->
 		ast(Children),
 		"</div></div>\n"
 	].
+
+%% Quote and verse blocks. The title sits before the body.
+%% Attribution is positional attributes 2 and 3.
+
+quote_block({quote_block, Attrs, Body, _}) ->
+	case quote_style(Attrs) of
+		<<"verse">> ->
+			[
+				"<div class=\"verseblock\">\n",
+				block_title(Attrs),
+				"<pre class=\"content\">", inline(Body), "</pre>\n",
+				attribution(Attrs),
+				"</div>\n"
+			];
+		_ ->
+			[
+				"<div class=\"quoteblock\">\n",
+				block_title(Attrs),
+				"<div class=\"content\">\n",
+				ast(Body),
+				"</div>\n",
+				attribution(Attrs),
+				"</div>\n"
+			]
+	end.
+
+block_title(#{<<"title">> := Title}) ->
+	["<div class=\"title\">", inline(Title), "</div>\n"];
+block_title(_) ->
+	[].
+
+attribution(Attrs) ->
+	[
+		"<div class=\"attribution\">\n",
+		attribution_body(quote_value(Attrs, 3, <<"citetitle">>),
+			quote_value(Attrs, 2, <<"attribution">>)),
+		"</div>\n"
+	].
+
+attribution_body(none, none) ->
+	[];
+attribution_body(Cite, none) ->
+	["<em>", inline(Cite), "</em>\n"];
+attribution_body(none, Author) ->
+	["&#8212; ", inline(Author), "\n"];
+attribution_body(Cite, Author) ->
+	["<em>", inline(Cite), "</em><br />\n&#8212; ", inline(Author), "\n"].
+
+%% Positional attribute 1 is the style when that key was written.
+%% Otherwise the named style attribute is. The default is quote.
+quote_style(Attrs) ->
+	case maps:is_key(1, Attrs) of
+		true ->
+			maps:get(1, Attrs);
+		false ->
+			maps:get(<<"style">>, Attrs, <<"quote">>)
+	end.
+
+%% A positional attribute is written over a named one.
+%% An empty positional value is absent. Named is used
+%% only when that position was not in the list.
+quote_value(Attrs, Pos, Name) ->
+	case maps:is_key(Pos, Attrs) of
+		true ->
+			case maps:get(Pos, Attrs) of
+				<<>> -> none;
+				Value -> Value
+			end;
+		false ->
+			case maps:get(Name, Attrs, <<>>) of
+				<<>> -> none;
+				Value -> Value
+			end
+	end.
 
 %% Open blocks.
 
@@ -525,5 +600,445 @@ open_note_test() ->
 		"<p>Hello <strong>bold</strong>.</p>\n"
 		"<ul><li>One.\n</li>\n</ul>\n"
 		"</div></div>\n">> = HTML,
+	ok.
+
+quote_block_test() ->
+	Plain = asciideck:parse(
+		"____\n"
+		"Hello *world*.\n"
+		"\n"
+		"Second.\n"
+		"____\n"),
+	PlainHTML = iolist_to_binary(translate(Plain, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Hello <strong>world</strong>.</p>\n"
+		"<p>Second.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = PlainHTML,
+	Both = asciideck:parse(
+		".My Quote\n"
+		"[quote, Ann, Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	BothHTML = iolist_to_binary(translate(Both, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"title\">My Quote</div>\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = BothHTML,
+	Author = asciideck:parse(
+		"[quote, Ann]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	AuthorHTML = iolist_to_binary(translate(Author, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = AuthorHTML,
+	Cite = asciideck:parse(
+		"[quote, , The Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	CiteHTML = iolist_to_binary(translate(Cite, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>The Book</em>\n"
+		"</div>\n"
+		"</div>\n">> = CiteHTML,
+	Encoded = asciideck:parse(
+		"[quote, A & B, <Book>]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	EncodedHTML = iolist_to_binary(translate(Encoded, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>&lt;Book&gt;</em><br />\n"
+		"&#8212; A &amp; B\n"
+		"</div>\n"
+		"</div>\n">> = EncodedHTML,
+	List = asciideck:parse(
+		"____\n"
+		"* One\n"
+		"____\n"),
+	ListHTML = iolist_to_binary(translate(List, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<ul><li>One\n</li>\n</ul>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = ListHTML,
+	%% A positional value is written over the same named attribute.
+	Pos = asciideck:parse(
+		"[quote, Ann, Book, attribution=\"Other\", citetitle=\"Other Book\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	PosHTML = iolist_to_binary(translate(Pos, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = PosHTML,
+	Named = asciideck:parse(
+		"[attribution=\"Someone\", citetitle=\"Work\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	NamedHTML = iolist_to_binary(translate(Named, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Work</em><br />\n"
+		"&#8212; Someone\n"
+		"</div>\n"
+		"</div>\n">> = NamedHTML,
+	%% An empty positional value is absent, even when the name is set.
+	EmptyPos = asciideck:parse(
+		"[quote, , , attribution=\"Ann\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	EmptyHTML = iolist_to_binary(translate(EmptyPos, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = EmptyHTML,
+	%% A comment does not take the attribution.
+	Commented = asciideck:parse(
+		"[quote, Ann, Book]\n"
+		"// c\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	CommentedHTML = iolist_to_binary(translate(Commented, #{no_header_footer => true})),
+	<<"<!-- c-->\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = CommentedHTML,
+	%% A positional style wins over a later named style.
+	PosStyle = asciideck:parse(
+		"[quote, Ann, Book]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	PosStyleHTML = iolist_to_binary(translate(PosStyle, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>one two</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = PosStyleHTML,
+	%% An empty positional author does not clear a later named one.
+	LaterAnn = asciideck:parse(
+		"[quote, , Book]\n"
+		"[attribution=\"Ann\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	LaterAnnHTML = iolist_to_binary(translate(LaterAnn, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = LaterAnnHTML,
+	EarlierAnn = asciideck:parse(
+		"[attribution=\"Ann\", citetitle=\"Work\"]\n"
+		"[quote, , Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	EarlierAnnHTML = iolist_to_binary(translate(EarlierAnn, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = EarlierAnnHTML,
+	LaterCite = asciideck:parse(
+		"[quote, Ann,]\n"
+		"[citetitle=\"Book\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	LaterCiteHTML = iolist_to_binary(translate(LaterCite, #{no_header_footer => true})),
+	<<"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>Words.</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = LaterCiteHTML,
+	%% A literal delimiter does not let a verse style swallow the quote.
+	Lit = asciideck:parse(
+		"[verse]\n"
+		"....\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n"),
+	LitHTML = iolist_to_binary(translate(Lit, #{no_header_footer => true})),
+	<<"<div class=\"literalblock\">"
+		"<div class=\"content\"><pre></pre></div></div>\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>line</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = LitHTML,
+	InnerVerse = asciideck:parse(
+		"....\n"
+		"[verse]\n"
+		"....\n"
+		"____\n"
+		"line\n"
+		"____\n"),
+	InnerVerseHTML = iolist_to_binary(translate(InnerVerse, #{no_header_footer => true})),
+	<<"<div class=\"literalblock\">"
+		"<div class=\"content\"><pre>[verse]</pre></div></div>\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>line</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = InnerVerseHTML,
+	%% A rejected attribute list is a paragraph. The delimiter still opens.
+	Bad = asciideck:parse(
+		"[quote, \"Ann]\n"
+		"____\n"
+		"hello malformed\n"
+		"____\n"),
+	BadHTML = iolist_to_binary(translate(Bad, #{no_header_footer => true})),
+	<<"<p>[quote, &quot;Ann]</p>\n"
+		"<div class=\"quoteblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>hello malformed</p>\n"
+		"</div>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = BadHTML,
+	ok.
+
+verse_block_test() ->
+	AST = asciideck:parse(
+		".Verse Title\n"
+		"[verse, Ann, Book]\n"
+		"____\n"
+		"To *see* a world\n"
+		"And a heaven\n"
+		"\n"
+		"Hold infinity.\n"
+		"____\n"),
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<div class=\"title\">Verse Title</div>\n"
+		"<pre class=\"content\">To <strong>see</strong> a world\n"
+		"And a heaven\n"
+		"\n"
+		"Hold infinity.</pre>\n"
+		"<div class=\"attribution\">\n"
+		"<em>Book</em><br />\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = HTML,
+	Cross = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"*bold\n"
+		"still*\n"
+		"____\n"),
+	CrossHTML = iolist_to_binary(translate(Cross, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\"><strong>bold\n"
+		"still</strong></pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = CrossHTML,
+	Meta = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"\n"
+		".Title\n"
+		"____\n"
+		"after\n"),
+	MetaHTML = iolist_to_binary(translate(Meta, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">line\n"
+		"\n"
+		".Title</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n"
+		"<p>after</p>\n">> = MetaHTML,
+	Break = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"one +\n"
+		"two\n"
+		"____\n"),
+	BreakHTML = iolist_to_binary(translate(Break, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one<br/>\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = BreakHTML,
+	%% The first underscore line ends the verse. Later lines are not verse text.
+	Inner = asciideck:parse(
+		"[verse]\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n"),
+	InnerHTML = iolist_to_binary(translate(Inner, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">intro\n"
+		"\n"
+		"----</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n",
+		_/bits>> = InnerHTML,
+	%% A comment between the style and the delimiter stays a verse.
+	Comment = asciideck:parse(
+		"[verse]\n"
+		"// comment\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	CommentHTML = iolist_to_binary(translate(Comment, #{no_header_footer => true})),
+	<<"<!-- comment-->\n"
+		"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = CommentHTML,
+	EmptyPos = asciideck:parse(
+		"[verse]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	EmptyPosHTML = iolist_to_binary(translate(EmptyPos, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = EmptyPosHTML,
+	Named = asciideck:parse(
+		"[style=\"verse\", attribution=\"Ann\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	NamedHTML = iolist_to_binary(translate(Named, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"&#8212; Ann\n"
+		"</div>\n"
+		"</div>\n">> = NamedHTML,
+	Closest = asciideck:parse(
+		"[style=\"quote\"]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	ClosestHTML = iolist_to_binary(translate(Closest, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">one\n"
+		"two</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n">> = ClosestHTML,
+	%% A continued attribute entry does not keep the verse open.
+	Cont = asciideck:parse(
+		"[verse]\n"
+		":description: hello +\n"
+		"continued\n"
+		"____\n"
+		"intro\n"
+		"\n"
+		"----\n"
+		"____\n"
+		"code\n"
+		"----\n"
+		"____\n"
+		"after\n"),
+	ContHTML = iolist_to_binary(translate(Cont, #{no_header_footer => true})),
+	<<"<div class=\"verseblock\">\n"
+		"<pre class=\"content\">intro\n"
+		"\n"
+		"----</pre>\n"
+		"<div class=\"attribution\">\n"
+		"</div>\n"
+		"</div>\n",
+		_/bits>> = ContHTML,
 	ok.
 -endif.

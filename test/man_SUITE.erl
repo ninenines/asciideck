@@ -173,3 +173,60 @@ sidebar_block(_) ->
 	Man2 = iolist_to_binary(asciideck:to_manpage(AST2)),
 	{_, _} = binary:match(Man2, <<"\\fBC:\\\\Windows\\fR">>),
 	ok.
+
+quote_block(_) ->
+	doc("Quote and verse blocks are rendered in man pages. (16.7)"),
+	AST = asciideck:parse(
+		"= quote(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"quote - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		".My Quote\n"
+		"[quote, C:\\Ann, The Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBMy Quote\\fR">>),
+	{_, _} = binary:match(Man, <<"Words.">>),
+	{_, _} = binary:match(Man, <<"\\fIThe Book\\fR">>),
+	{_, _} = binary:match(Man, <<"\\(em C:\\\\Ann">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	Verse = asciideck:parse(
+		"= verse(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"verse - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[verse]\n"
+		"____\n"
+		"To *see* a world\n"
+		"____\n"),
+	VerseMan = iolist_to_binary(asciideck:to_manpage(Verse)),
+	{_, _} = binary:match(VerseMan, <<".nf\nTo \\fBsee\\fR a world\n.fi\n">>),
+	nomatch = binary:match(VerseMan, <<"Ignored AST node">>),
+	Named = asciideck:parse(
+		"= named(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"named - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"[style=\"verse\", attribution=\"Ann\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n"),
+	NamedMan = iolist_to_binary(asciideck:to_manpage(Named)),
+	{_, _} = binary:match(NamedMan, <<".nf\none\ntwo\n.fi\n">>),
+	{_, _} = binary:match(NamedMan, <<"\\(em Ann">>),
+	ok.

@@ -45,6 +45,18 @@ run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 run([{sidebar_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
 	{Children, Pending} = trailing_block_meta(Children0),
 	[{sidebar_block, Attrs, run(Children), Ann}|run(Pending ++ Tail)];
+%% Verse is lines of text. A title or attribute list in the
+%% body is part of those lines, not metadata for the next block.
+%% Metadata with no following block belongs to the next block
+%% after a quote, not to the quote.
+run([{quote_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
+	case quote_style(Attrs) of
+		<<"verse">> ->
+			[{quote_block, Attrs, Children0, Ann}|run(Tail)];
+		_ ->
+			{Children, Pending} = trailing_block_meta(Children0),
+			[{quote_block, Attrs, run(Children), Ann}|run(Pending ++ Tail)]
+	end;
 run([Block|Tail]) ->
 	[Block|run(Tail)].
 
@@ -74,7 +86,13 @@ apply_attributes(AST=[Element0={Type, Attrs0, Content, Ann}|Tail], Attrs) ->
 		skip ->
 			[Element0|apply_attributes(Tail, Attrs)];
 		apply ->
-			Element = {Type, maps:merge(Attrs0, Attrs), Content, Ann},
+			Merged = case Type of
+				quote_block ->
+					merge_quote_attrs(Attrs0, Attrs);
+				_ ->
+					maps:merge(Attrs0, Attrs)
+			end,
+			Element = {Type, Merged, Content, Ann},
 			[Element|Tail]
 	end.
 
@@ -90,8 +108,45 @@ can_apply(block_id) -> skip;
 can_apply(attribute_list) -> skip;
 can_apply(block_title) -> skip;
 can_apply(attribute_entry) -> skip;
+%% A comment does not take the preceding attribute list or title.
+can_apply(comment_line) -> skip;
+can_apply(comment_block) -> skip;
 %% Everything else is a block.
 can_apply(_) -> apply.
+
+%% An empty positional value is unset. In that same list it hides
+%% the named attribute for the position. It does not clear a value
+%% written in another list. A non-empty positional still wins.
+merge_quote_attrs(Earlier, Closer) ->
+	maps:merge(prepare_quote_attrs(Earlier), prepare_quote_attrs(Closer)).
+
+prepare_quote_attrs(Attrs) ->
+	Attrs1 = suppress_named(Attrs, 1, <<"style">>),
+	Attrs2 = suppress_named(Attrs1, 2, <<"attribution">>),
+	Attrs3 = suppress_named(Attrs2, 3, <<"citetitle">>),
+	drop_empty_pos(Attrs3).
+
+suppress_named(Attrs, Pos, Name) ->
+	case maps:get(Pos, Attrs, undefined) of
+		<<>> -> maps:remove(Name, Attrs);
+		_ -> Attrs
+	end.
+
+drop_empty_pos(Attrs) ->
+	maps:filter(fun
+		(Key, <<>>) when is_integer(Key), Key > 0 -> false;
+		(_, _) -> true
+	end, Attrs).
+
+%% Positional attribute 1 is the style when that key was written.
+%% Otherwise the named style attribute is. The default is quote.
+quote_style(Attrs) ->
+	case maps:is_key(1, Attrs) of
+		true ->
+			maps:get(1, Attrs);
+		false ->
+			maps:get(<<"style">>, Attrs, <<"quote">>)
+	end.
 
 %% A title, id, or attribute list at the end of a sidebar
 %% has the closer as its next line. It applies outside.
@@ -302,5 +357,196 @@ sidebar_block_test() ->
 		"[role=\"x\"]\n"
 		"****\n"
 		"after\n">>)),
+	ok.
+
+quote_block_test() ->
+	[{quote_block, #{
+		1 := <<"quote">>,
+		2 := <<"Ann">>,
+		3 := <<"Book">>
+	}, [{paragraph, _, <<"Words.">>, _}], _}] = run(asciideck_block_parser:parse(
+		"[quote, Ann, Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n")),
+	[{quote_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{attribute_entry, #{name := <<"foo">>}, <<"bar">>, _},
+		{paragraph, #{
+			<<"title">> := <<"Title">>,
+			<<"role">> := <<"x">>
+		}, <<"after">>, _}] = run(asciideck_block_parser:parse(
+		"____\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		":foo: bar\n"
+		"[role=\"x\"]\n"
+		"____\n"
+		"after\n")),
+	%% A title inside verse stays in the verse text. It does not title "after".
+	[{quote_block, #{1 := <<"verse">>}, [], #{raw := <<"line\n\n.Title">>}},
+		{paragraph, #{}, <<"after">>, _}] = run(asciideck_block_parser:parse(
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"\n"
+		".Title\n"
+		"____\n"
+		"after\n")),
+	%% The closest list sets the style. An earlier list keeps attribution.
+	[{quote_block, #{
+		1 := <<"verse">>,
+		2 := <<"Ann">>,
+		3 := <<"Book">>
+	}, [], _}] = run(asciideck_block_parser:parse(
+		"[quote, Ann, Book]\n"
+		"[verse]\n"
+		"____\n"
+		"line\n"
+		"____\n")),
+	[{quote_block, #{
+		1 := <<"quote">>,
+		2 := <<"Ann">>,
+		3 := <<"Book">>
+	}, [{paragraph, _, <<"line">>, _}], _}] = run(asciideck_block_parser:parse(
+		"[verse]\n"
+		"[quote, Ann, Book]\n"
+		"____\n"
+		"line\n"
+		"____\n")),
+	%% A comment does not take the attribute list or the title.
+	[{comment_line, _, <<"comment">>, _},
+		{quote_block, #{1 := <<"verse">>}, [], #{raw := <<"one\ntwo">>}}]
+		= run(asciideck_block_parser:parse(
+		"[verse]\n"
+		"// comment\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	[{comment_line, _, <<"c">>, _},
+		{quote_block, #{
+			1 := <<"quote">>,
+			2 := <<"Ann">>,
+			3 := <<"Book">>
+		}, [{paragraph, _, <<"Words.">>, _}], _}]
+		= run(asciideck_block_parser:parse(
+		"[quote, Ann, Book]\n"
+		"// c\n"
+		"____\n"
+		"Words.\n"
+		"____\n")),
+	[{comment_block, _, <<"hidden">>, _},
+		{quote_block, #{1 := <<"verse">>}, [], #{raw := <<"one\ntwo">>}}]
+		= run(asciideck_block_parser:parse(
+		"[verse]\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	[{comment_line, _, <<"c">>, _},
+		{quote_block, #{
+			1 := <<"verse">>,
+			<<"title">> := <<"Title">>
+		}, [], _}] = run(asciideck_block_parser:parse(
+		".Title\n"
+		"// c\n"
+		"[verse]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	[{comment_line, _, <<"comment">>, _},
+		{paragraph, #{1 := <<"NOTE">>}, <<"Paragraph.">>, _}]
+		= run(asciideck_block_parser:parse(
+		"[NOTE]\n"
+		"// comment\n"
+		"Paragraph.\n")),
+	%% Named style is the style when positional 1 is absent.
+	[{quote_block, #{
+		<<"style">> := <<"verse">>,
+		<<"attribution">> := <<"Ann">>
+	}, [], _}] = run(asciideck_block_parser:parse(
+		"[style=\"verse\", attribution=\"Ann\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	[{quote_block, #{<<"style">> := <<"verse">>}, [], _}]
+		= run(asciideck_block_parser:parse(
+		"[style=\"quote\"]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	%% A positional style wins over a later named style.
+	[{quote_block, #{
+		1 := <<"quote">>,
+		2 := <<"Ann">>,
+		3 := <<"Book">>,
+		<<"style">> := <<"verse">>
+	}, [{paragraph, _, <<"one\ntwo">>, _}], _}]
+		= run(asciideck_block_parser:parse(
+		"[quote, Ann, Book]\n"
+		"[style=\"verse\"]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	%% An empty positional value does not clear another list.
+	[{quote_block, #{1 := <<"verse">>, 2 := <<"Ann">>}, [], _}]
+		= run(asciideck_block_parser:parse(
+		"[verse]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	[{quote_block, #{<<"style">> := <<"verse">>, 2 := <<"Ann">>}, [], _}]
+		= run(asciideck_block_parser:parse(
+		"[style=\"verse\"]\n"
+		"[, Ann]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
+	[{quote_block, BookAnn=#{3 := <<"Book">>, <<"attribution">> := <<"Ann">>},
+		[{paragraph, _, <<"Words.">>, _}], _}]
+		= run(asciideck_block_parser:parse(
+		"[quote, , Book]\n"
+		"[attribution=\"Ann\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n")),
+	false = maps:is_key(2, BookAnn),
+	[{quote_block, NamedPos=#{<<"attribution">> := <<"Ann">>, 3 := <<"Book">>},
+		[{paragraph, _, <<"Words.">>, _}], _}]
+		= run(asciideck_block_parser:parse(
+		"[attribution=\"Ann\", citetitle=\"Work\"]\n"
+		"[quote, , Book]\n"
+		"____\n"
+		"Words.\n"
+		"____\n")),
+	false = maps:is_key(2, NamedPos),
+	[{quote_block, #{2 := <<"Ann">>, <<"citetitle">> := <<"Book">>},
+		[{paragraph, _, <<"Words.">>, _}], _}]
+		= run(asciideck_block_parser:parse(
+		"[quote, Ann,]\n"
+		"[citetitle=\"Book\"]\n"
+		"____\n"
+		"Words.\n"
+		"____\n")),
+	[{quote_block, #{1 := <<"verse">>, 2 := <<"Other">>, 3 := <<"Work">>},
+		[], _}] = run(asciideck_block_parser:parse(
+		"[quote, Ann, Book]\n"
+		"[verse, Other, Work]\n"
+		"____\n"
+		"one\n"
+		"two\n"
+		"____\n")),
 	ok.
 -endif.
