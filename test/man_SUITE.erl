@@ -137,3 +137,39 @@ super_sub(_) ->
 	{_, _} = binary:match(Man, <<"x\\u10\\d.">>),
 	nomatch = binary:match(Man, <<"Ignored AST node">>),
 	ok.
+
+sidebar_block(_) ->
+	doc("Sidebar blocks are rendered in man pages. (16.4)"),
+	AST = asciideck:parse(
+		"= sidebar(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"sidebar - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		".An Example Sidebar\n"
+		"****\n"
+		"Outside the narrative.\n"
+		"****\n"),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"\\fBAn Example Sidebar\\fR">>),
+	{_, _} = binary:match(Man, <<"Outside the narrative.">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	AST2 = asciideck:parse(
+		"= sidebar(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"sidebar - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		".C:\\Windows\n"
+		"****\n"
+		"body\n"
+		"****\n"),
+	Man2 = iolist_to_binary(asciideck:to_manpage(AST2)),
+	{_, _} = binary:match(Man2, <<"\\fBC:\\\\Windows\\fR">>),
+	ok.

@@ -75,6 +75,7 @@ ast_node(Node={Type, _, _, _}) ->
 			listing_block -> listing_block(Node);
 			passthrough_block -> passthrough_block(Node);
 			open_block -> open_block(Node);
+			sidebar_block -> sidebar_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			block_macro -> block_macro(Node);
@@ -202,6 +203,21 @@ verbatim_listing(Listing) ->
 
 passthrough_block({passthrough_block, _, HTML, _}) ->
 	HTML.
+
+%% Sidebar blocks. The title sits inside the content.
+sidebar_block({sidebar_block, Attrs, Children, _}) ->
+	[
+		"<div class=\"sidebarblock\">",
+		"<div class=\"content\">",
+		case Attrs of
+			#{<<"title">> := Title} ->
+				["<div class=\"title\">", inline(Title), "</div>\n"];
+			_ ->
+				[]
+		end,
+		ast(Children),
+		"</div></div>\n"
+	].
 
 %% Open blocks.
 
@@ -364,6 +380,17 @@ open_block_test() ->
 	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
 	<<"<div class=\"openblock\"><div class=\"content\">"
 		"<p>Hello!</p>\n"
+		"</div></div>\n">> = HTML,
+	ok.
+
+sidebar_block_test() ->
+	AST = [{sidebar_block, #{<<"title">> => <<"An Example Sidebar">>}, [
+		{paragraph, #{}, <<"Outside the narrative.">>, #{line => 2}}
+	], #{line => 1}}],
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<div class=\"sidebarblock\"><div class=\"content\">"
+		"<div class=\"title\">An Example Sidebar</div>\n"
+		"<p>Outside the narrative.</p>\n"
 		"</div></div>\n">> = HTML,
 	ok.
 

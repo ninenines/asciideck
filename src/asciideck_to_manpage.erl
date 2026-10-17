@@ -79,6 +79,7 @@ ast_node(Node={Type, _, _, _}) ->
 			literal_block -> listing_block(Node);
 			listing_block -> listing_block(Node);
 			open_block -> open_block(Node);
+			sidebar_block -> sidebar_block(Node);
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);
@@ -141,6 +142,19 @@ admonition_label(<<C, Rest/bits>>) ->
 
 open_block({open_block, _, Children, _}) ->
 	ast(Children).
+
+%% Sidebar blocks.
+
+sidebar_block({sidebar_block, Attrs, Children, _}) ->
+	[
+		case Attrs of
+			#{<<"title">> := Title} ->
+				[".PP\n\\fB", inline(Title), "\\fR\n"];
+			_ ->
+				[]
+		end,
+		ast(Children)
+	].
 
 %% Listing blocks.
 

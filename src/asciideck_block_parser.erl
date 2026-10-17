@@ -301,12 +301,30 @@ block_macro(St) ->
 	end, Line1),
 	AttrList1 = trim(AttrList0),
 	{attribute_list, AttrList, <<>>, _} = attribute_list(St, AttrList1),
-	%% Block macros must be followed by at least one empty line.
-	_ = empty_line(St),
+	%% User Guide: one line, with a blank line or a block
+	%% delimiter on either side. A delimiter stays for the
+	%% next block. The sidebar closer is one.
+	follow_macro(St),
 	{block_macro, AttrList#{
 		name => Name,
 		target => Target
 	}, <<>>, Ann}.
+
+%% A blank line is consumed. A block delimiter is not.
+follow_macro(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	case read_line(St) of
+		eof ->
+			ok;
+		Line ->
+			case trim(Line) of
+				<<>> ->
+					ok;
+				_ ->
+					asciideck_reader:set_position(ReaderPid, Ln),
+					true = delimited_line(Line)
+			end
+	end.
 
 -ifdef(TEST).
 block_macro_image_test() ->
@@ -323,6 +341,13 @@ block_macro_image_test() ->
 	}, <<>>, _}] = parse(
 		<<"image::images/layout.png[\"J14P main circuit board\", "
 			"title=\"Main circuit board\"]">>),
+	%% A block delimiter can stand in for the blank line.
+	[{block_macro, #{name := <<"image">>, target := <<"logo.png">>}, <<>>, _},
+		{listing_block, _, <<"code">>, _}] = parse(<<
+		"image::logo.png[Logo]\n"
+		"----\n"
+		"code\n"
+		"----\n">>),
 	ok.
 
 block_macro_include_test() ->
@@ -915,18 +940,200 @@ literal_block_test() ->
 -endif.
 
 %% Asciidoc User Guide 16.4
+%%
+%% The body is a section body (Block, not Title). Parse each
+%% block in place, so a line of asterisks inside that block
+%% stays there. A line of four or more asterisks ends the
+%% sidebar when it is the next block. A one-line title at
+%% the next block is not a section body element, so it is
+%% dropped. A bare marker such as `==` stays text.
 sidebar_block(St) ->
-	delimited_block(St, sidebar_block, $*).
+	Four = <<$*, $*, $*, $*>>,
+	<<Four:4/binary, Line0/bits>> = read_line(St),
+	Ann = ann(St),
+	repeats(trim(Line0, trailing), $*),
+	{sidebar_block, #{}, sidebar_body(St), Ann}.
+
+sidebar_body(St) ->
+	skip(fun empty_line/1, St),
+	case sidebar_closer(St) of
+		true ->
+			[];
+		false ->
+			case drop_sidebar_title(St) of
+				true ->
+					sidebar_body(St);
+				false ->
+					sidebar_block_child(St)
+			end
+	end.
+
+sidebar_block_child(St) ->
+	case block(St) of
+		eof ->
+			[];
+		%% `==` followed by a blank line is an empty title.
+		%% The marker is text. A non-empty title was already
+		%% dropped, including one that has no blank line after it.
+		{section_title, #{level := Level}, <<>>, Ann} ->
+			Marker = binary:copy(<<"=">>, Level + 1),
+			[{paragraph, #{}, Marker, Ann}|sidebar_body(St)];
+		{section_title, _, _, _} ->
+			sidebar_body(St);
+		Child ->
+			[Child|sidebar_body(St)]
+	end.
+
+%% Leave the reader unmoved when this line is not the closer.
+sidebar_closer(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		Four = <<$*, $*, $*, $*>>,
+		<<Four:4/binary, Line0/bits>> = read_line(St),
+		repeats(trim(Line0, trailing), $*),
+		true
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
+
+%% User Guide 11.2, at a block boundary. One to five equals,
+%% then space, then text. The trailing marker is optional.
+%% `==` and `== ` have no text, so they are not titles.
+drop_sidebar_title(St=#state{reader=ReaderPid}) ->
+	Ln = asciideck_reader:get_position(ReaderPid),
+	try
+		true = sidebar_title_line(read_line(St))
+	catch _:_ ->
+		asciideck_reader:set_position(ReaderPid, Ln),
+		false
+	end.
+
+sidebar_title_line(Line) when is_binary(Line) ->
+	case title_rest(trim(Line, trailing), 0) of
+		{_, Rest} ->
+			trim(Rest) =/= <<>>;
+		_ ->
+			false
+	end;
+sidebar_title_line(_) ->
+	false.
+
+title_rest(<<$=, Rest/bits>>, N) when N < 5 ->
+	title_rest(Rest, N + 1);
+title_rest(<<C, Rest/bits>>, N) when N >= 1, ?IS_WS(C) ->
+	{N, Rest};
+title_rest(_, _) ->
+	false.
 
 -ifdef(TEST).
 sidebar_block_test() ->
-	Block = <<
+	[{sidebar_block, _, [
+		{paragraph, _, <<
+			"Any AsciiDoc SectionBody element (apart from\n"
+			"SidebarBlocks) can be placed inside a sidebar."
+		>>, _}
+	], _}] = parse(<<
+		"************************************************\n"
 		"Any AsciiDoc SectionBody element (apart from\n"
-		"SidebarBlocks) can be placed inside a sidebar.">>,
-	[{sidebar_block, _, Block, _}] = parse(<<
-		"************************************************\n",
-		Block/binary, "\n"
+		"SidebarBlocks) can be placed inside a sidebar.\n"
 		"************************************************\n">>),
+	[{sidebar_block, _, [
+		{paragraph, _, <<"First paragraph.">>, _},
+		{paragraph, _, <<"Second paragraph.">>, _},
+		{listing_block, _, <<"code">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"First paragraph.\n"
+		"\n"
+		"Second paragraph.\n"
+		"\n"
+		"----\n"
+		"code\n"
+		"----\n"
+		"****\n">>),
+	%% The inner delimiter ends the outer sidebar.
+	[
+		{sidebar_block, _, [{paragraph, _, <<"outer">>, _}], _},
+		{paragraph, _, <<"inner">>, _},
+		{sidebar_block, _, [], _}
+	] = parse(<<
+		"****\n"
+		"outer\n"
+		"\n"
+		"****\n"
+		"inner\n"
+		"****\n"
+		"****\n">>),
+	%% A line of four bytes is not a sidebar.
+	[{paragraph, _, <<"code">>, _}] = parse(<<"code\n">>),
+	%% Asterisks inside a nested block do not end the sidebar.
+	[{sidebar_block, _, [
+		{listing_block, _, <<"****\ncode">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"----\n"
+		"****\n"
+		"code\n"
+		"----\n"
+		"****\n">>),
+	[{sidebar_block, _, [
+		{table, _, <<"|A\n****\n|B">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"|===\n"
+		"|A\n"
+		"****\n"
+		"|B\n"
+		"|===\n"
+		"****\n">>),
+	%% A section title is not a section body element.
+	[{sidebar_block, _, [
+		{paragraph, _, <<"before">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"before\n"
+		"\n"
+		"== Not a title\n"
+		"\n"
+		"after\n"
+		"****\n">>),
+	[{sidebar_block, _, [
+		{paragraph, _, <<"before\n== Not a title\nafter">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"before\n"
+		"== Not a title\n"
+		"after\n"
+		"****\n">>),
+	%% A title at the next block is dropped with no blank line.
+	[{sidebar_block, _, [
+		{paragraph, _, <<"para">>, _},
+		{paragraph, _, <<"still">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"para\n"
+		"\n"
+		"== Title\n"
+		"still\n"
+		"****\n">>),
+	%% A marker with no title text stays text.
+	[{sidebar_block, _, [
+		{paragraph, _, <<"==">>, _},
+		{paragraph, _, <<"body">>, _}
+	], _}] = parse(<<
+		"****\n"
+		"== \n"
+		"\n"
+		"body\n"
+		"****\n">>),
+	[{sidebar_block, _, [
+		{block_macro, #{name := <<"image">>, target := <<"logo.png">>}, <<>>, _}
+	], _}] = parse(<<
+		"****\n"
+		"image::logo.png[Logo]\n"
+		"****\n">>),
 	ok.
 -endif.
 

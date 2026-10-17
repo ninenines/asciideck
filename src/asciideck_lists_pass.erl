@@ -65,6 +65,8 @@ list([LI={list_item, Attrs, _, Ann}|Tail0], Acc) ->
 	list(Tail, [{list, Attrs, Items, Ann}|Acc]);
 list([{open_block, Attrs, Children, Ann}|Tail], Acc) ->
 	list(Tail, [{open_block, Attrs, run(Children), Ann}|Acc]);
+list([{sidebar_block, Attrs, Children, Ann}|Tail], Acc) ->
+	list(Tail, [{sidebar_block, Attrs, run(Children), Ann}|Acc]);
 list([Block|Tail], Acc) ->
 	list(Tail, [Block|Acc]).
 
@@ -148,6 +150,8 @@ add_child({list_item, Attrs, Children, Ann}, Child) ->
 
 maybe_lists({open_block, Attrs, Children, Ann}) ->
 	{open_block, Attrs, run(Children), Ann};
+maybe_lists({sidebar_block, Attrs, Children, Ann}) ->
+	{sidebar_block, Attrs, run(Children), Ann};
 maybe_lists(Block) ->
 	Block.
 
@@ -446,6 +450,38 @@ literal_paragraph_child_test() ->
 			[{paragraph, #{}, <<"Fusce euismod commodo velit.">>, #{line => 1}}], #{line => 1}},
 		{literal_paragraph, #{<<"subs">> => <<"verbatim">>},
 			<<"Fusce euismod commodo velit.">>, #{line => 4}}
+	]),
+	ok.
+
+sidebar_block_test() ->
+	[{sidebar_block, _, [
+		{list, #{type := bulleted, level := 1}, [
+			{list_item, #{type := bulleted, level := 1},
+				[{paragraph, #{}, <<"Inner.">>, _}], _}
+		], _}
+	], _}] = run([
+		{sidebar_block, #{}, [
+			{list_item, #{type => bulleted, level => 1},
+				[{paragraph, #{}, <<"Inner.">>, #{line => 2}}], #{line => 2}}
+		], #{line => 1}}
+	]),
+	[{list, #{type := bulleted, level := 1}, [
+		{list_item, #{type := bulleted, level := 1}, [
+			{paragraph, #{}, <<"Item.">>, _},
+			{sidebar_block, _, [
+				{list, #{type := bulleted, level := 1}, [
+					{list_item, _, [{paragraph, #{}, <<"Inner.">>, _}], _}
+				], _}
+			], _}
+		], _}
+	], _}] = run([
+		{list_item, #{type => bulleted, level => 1},
+			[{paragraph, #{}, <<"Item.">>, #{line => 1}}], #{line => 1}},
+		{list_item_continuation, #{}, <<>>, #{line => 2}},
+		{sidebar_block, #{}, [
+			{list_item, #{type => bulleted, level => 1},
+				[{paragraph, #{}, <<"Inner.">>, #{line => 4}}], #{line => 4}}
+		], #{line => 3}}
 	]),
 	ok.
 -endif.

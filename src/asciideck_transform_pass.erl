@@ -44,6 +44,8 @@ run([{Type, Attrs0=#{1 := Style}, Text, Ann}|Tail])
 	[{admonition, Attrs, Text, Ann}|run(Tail)];
 run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[open_style(Attrs, Children, Ann)|run(Tail)];
+run([{sidebar_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
+	[{sidebar_block, Attrs, run(Children), Ann}|run(Tail)];
 run([{list, Attrs, Items, Ann}|Tail]) ->
 	[{list, Attrs, run(Items), Ann}|run(Tail)];
 run([{list_item, Attrs, Children, Ann}|Tail]) ->
@@ -211,5 +213,15 @@ open_block_style_test() ->
 	false = maps:is_key(raw, OpenAnn),
 	%% Trailing spaces stay. Blank lines at either end do not.
 	<<"Hi\n  x  ">> = verbatim_text(<<"\n \nHi\n  x  \n\n">>),
+	ok.
+
+sidebar_block_test() ->
+	[{sidebar_block, _, [
+		{admonition, #{style := <<"NOTE">>}, <<"Careful.">>, _}
+	], _}] = run([
+		{sidebar_block, #{}, [
+			{paragraph, #{1 => <<"NOTE">>}, <<"Careful.">>, #{line => 2}}
+		], #{line => 1}}
+	]),
 	ok.
 -endif.

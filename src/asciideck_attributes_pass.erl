@@ -40,6 +40,11 @@ run([{attribute_list, Attrs, <<>>, _}|Tail0]) ->
 	run(Tail);
 run([{open_block, Attrs, Children, Ann}|Tail]) when is_list(Children) ->
 	[{open_block, Attrs, run(Children), Ann}|run(Tail)];
+%% Metadata with no following block belongs to the next
+%% block after the sidebar, not to the sidebar.
+run([{sidebar_block, Attrs, Children0, Ann}|Tail]) when is_list(Children0) ->
+	{Children, Pending} = trailing_block_meta(Children0),
+	[{sidebar_block, Attrs, run(Children), Ann}|run(Pending ++ Tail)];
 run([Block|Tail]) ->
 	[Block|run(Tail)].
 
@@ -87,6 +92,31 @@ can_apply(block_title) -> skip;
 can_apply(attribute_entry) -> skip;
 %% Everything else is a block.
 can_apply(_) -> apply.
+
+%% A title, id, or attribute list at the end of a sidebar
+%% has the closer as its next line. It applies outside.
+trailing_block_meta(Children) ->
+	{Meta, RevBody} = take_block_meta(lists:reverse(Children), []),
+	{lists:reverse(RevBody), Meta}.
+
+take_block_meta([Node|Rest], Acc) ->
+	case block_meta(Node) of
+		true ->
+			take_block_meta(Rest, [Node|Acc]);
+		false ->
+			{Acc, [Node|Rest]}
+	end;
+take_block_meta([], Acc) ->
+	{Acc, []}.
+
+block_meta({block_id, _, _, _}) -> true;
+block_meta({attribute_list, _, _, _}) -> true;
+block_meta({block_title, _, _, _}) -> true;
+%% An attribute entry is skipped while applying a title,
+%% the same as at the top level. It has to leave with
+%% the title, or the title is dropped inside the sidebar.
+block_meta({attribute_entry, _, _, _}) -> true;
+block_meta(_) -> false.
 
 -ifdef(TEST).
 attribute_list_test() ->
@@ -201,5 +231,76 @@ attribute_entry_skip_test() ->
 			<<"Hello!">>, #{line => 3}}
 	],
 	AST = run(AST0),
+	ok.
+
+sidebar_block_test() ->
+	[{sidebar_block, _, [
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"Hello!">>, _}
+	], _}] = run([
+		{sidebar_block, #{}, [
+			{block_title, #{}, <<"Title">>, #{line => 2}},
+			{paragraph, #{}, <<"Hello!">>, #{line => 3}}
+		], #{line => 1}}
+	]),
+	[{sidebar_block, _, [
+		{paragraph, _, <<"hello">>, _}
+	], _},
+		{paragraph, #{
+			<<"title">> := <<"Title">>,
+			1 := <<"NOTE">>,
+			<<"role">> := <<"x">>
+		}, <<"paragraph">>, _}] = run(asciideck_block_parser:parse(<<
+		"****\n"
+		"hello\n"
+		"\n"
+		"[NOTE]\n"
+		"[role=\"x\"]\n"
+		".Title\n"
+		"****\n"
+		"paragraph\n">>)),
+	[{sidebar_block, _, [], _},
+		{paragraph, #{<<"id">> := <<"bid">>}, <<"paragraph">>, _}]
+		= run(asciideck_block_parser:parse(<<
+		"****\n"
+		"[[bid]]\n"
+		"****\n"
+		"paragraph\n">>)),
+	%% An attribute entry does not swallow the title or the style.
+	[{sidebar_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{attribute_entry, #{name := <<"foo">>}, <<"bar">>, _},
+		{paragraph, #{<<"title">> := <<"Title">>}, <<"after">>, _}]
+		= run(asciideck_block_parser:parse(<<
+		"****\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		":foo: bar\n"
+		"****\n"
+		"after\n">>)),
+	[{sidebar_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{attribute_entry, #{name := <<"foo">>}, <<"bar">>, _},
+		{paragraph, #{1 := <<"NOTE">>}, <<"after">>, _}]
+		= run(asciideck_block_parser:parse(<<
+		"****\n"
+		"hello\n"
+		"\n"
+		"[NOTE]\n"
+		":foo: bar\n"
+		"****\n"
+		"after\n">>)),
+	[{sidebar_block, _, [{paragraph, _, <<"hello">>, _}], _},
+		{attribute_entry, #{name := <<"foo">>}, <<"bar">>, _},
+		{paragraph, #{
+			<<"title">> := <<"Title">>,
+			<<"role">> := <<"x">>
+		}, <<"after">>, _}] = run(asciideck_block_parser:parse(<<
+		"****\n"
+		"hello\n"
+		"\n"
+		".Title\n"
+		":foo: bar\n"
+		"[role=\"x\"]\n"
+		"****\n"
+		"after\n">>)),
 	ok.
 -endif.
