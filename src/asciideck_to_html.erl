@@ -18,7 +18,7 @@
 
 translate(AST, Opts) ->
 	Output0 = ast(AST),
-	Output1 = maybe_header_footer(Output0, Opts),
+	Output1 = maybe_header_footer(Output0, AST, Opts),
 	{CompressExt, Output} = case Opts of
 		#{compress := gzip} -> {".gz", zlib:gzip(Output1)};
 		_ -> {"", Output1}
@@ -35,21 +35,82 @@ translate(AST, Opts) ->
 			Output
 	end.
 
-maybe_header_footer(Body, #{no_header_footer := _}) ->
+maybe_header_footer(Body, _AST, #{no_header_footer := _}) ->
 	Body;
-maybe_header_footer(Body, _Opts) ->
+maybe_header_footer(Body, AST, _Opts) ->
 	[
 		"<!DOCTYPE html>\n"
 		"<html lang=\"en\">\n"
 		"<head>\n"
 		"<meta charset=\"utf-8\"/>\n"
-		"<title>TODO title</title>\n" %% @todo
+		"<title>", html_title(AST), "</title>\n"
 		"</head>\n"
 		"<body>\n",
 		Body,
 		"</body>\n"
 		"</html>\n"
 	].
+
+%% The document header is whatever leads the AST: comment lines,
+%% comment blocks, attribute entries, and one level-0 title.
+%% A title attribute in that header replaces the document title.
+%% Emptying it leaves the element empty. Unsetting it falls
+%% back to the document title. The first other block ends the
+%% header, so a later level-0 title is not the document title.
+
+html_title(AST) ->
+	case html_title(AST, unset) of
+		{set, Value} ->
+			html_encode(Value);
+		{doc, Title} ->
+			title_text(Title);
+		unset ->
+			[]
+	end.
+
+html_title([{comment_line, _, _, _}|Rest], Found) ->
+	html_title(Rest, Found);
+html_title([{comment_block, _, _, _}|Rest], Found) ->
+	html_title(Rest, Found);
+html_title([{attribute_entry, #{name := <<"title">>, unset := true}, _, _}|Rest], _) ->
+	html_title(Rest, unset);
+html_title([{attribute_entry, #{name := <<"title">>}, Value, _}|Rest], _) ->
+	html_title(Rest, {set, Value});
+html_title([{attribute_entry, _, _, _}|Rest], Found) ->
+	html_title(Rest, Found);
+html_title([{section_title, #{level := 0}, Title, _}|_], unset) ->
+	{doc, Title};
+html_title(_, Found) ->
+	Found.
+
+%% <title> is RCDATA: only a title end tag closes it. The tags this
+%% function emits do not. +++passthrough+++ is copied raw into the
+%% body, so the same text here is encoded instead.
+
+title_text(Text) when is_binary(Text) ->
+	html_encode(Text);
+title_text({link, #{target := Target}, Text, _}) ->
+	["<a href=\"", html_encode(Target), "\">", title_text(Text), "</a>"];
+title_text({xref, #{id := ID}, Text, _}) ->
+	["<a href=\"#", html_encode(ID), "\">", title_text(Text), "</a>"];
+title_text({emphasized, _, Text, _}) ->
+	["<em>", title_text(Text), "</em>"];
+title_text({strong, _, Text, _}) ->
+	["<strong>", title_text(Text), "</strong>"];
+title_text({inline_literal_passthrough, _, Text, _}) ->
+	["<code>", title_text(Text), "</code>"];
+title_text({superscript, _, Text, _}) ->
+	["<sup>", title_text(Text), "</sup>"];
+title_text({subscript, _, Text, _}) ->
+	["<sub>", title_text(Text), "</sub>"];
+title_text({monospaced, _, Text, _}) ->
+	["<code>", title_text(Text), "</code>"];
+title_text({passthrough, _, Text, _}) ->
+	title_text(Text);
+title_text({line_break, _, _, _}) ->
+	"<br/>";
+title_text(Text) when is_list(Text) ->
+	[title_text(T) || T <- Text].
 
 filename_from_ast([{section_title, #{level := 0}, Filename, _}|_]) ->
 	Filename.
@@ -1532,5 +1593,98 @@ comment_block_test() ->
 		"|===\n"),
 	ZeroHTML = iolist_to_binary(translate(Zero, #{no_header_footer => true})),
 	{_, _} = binary:match(ZeroHTML, <<"<col width=\"0%\"/><col width=\"0%\"/>">>),
+	ok.
+
+%% The HTML title element is the document title. AsciiDoc User Guide,
+%% Header: a title attribute entry in the header replaces it.
+
+html_page(Data) ->
+	iolist_to_binary(translate(asciideck:parse(Data), #{})).
+
+html_title_test() ->
+	Titled = html_page(<<"= Tom & Jerry's <show>\n\nHello.\n">>),
+	{_, _} = binary:match(Titled,
+		<<"<title>Tom &amp; Jerry&apos;s &lt;show&gt;</title>">>),
+	nomatch = binary:match(Titled, <<"TODO title">>),
+	{_, _} = binary:match(Titled, <<"<h1 id=\"_tom___jerry_s__show\">">>),
+	Marked = html_page(<<"= Hello *world*\n\nX.\n">>),
+	{_, _} = binary:match(Marked, <<"<title>Hello <strong>world</strong></title>">>),
+	Bare = html_page(<<"Hello.\n">>),
+	{_, _} = binary:match(Bare, <<"<title></title>">>),
+	Section = html_page(<<"== Section Title\n\nHello.\n">>),
+	{_, _} = binary:match(Section, <<"<title></title>">>),
+	Later = html_page(<<"Hello.\n\n= Not The Document\n\nX.\n">>),
+	{_, _} = binary:match(Later, <<"<title></title>">>),
+	{_, _} = binary:match(Later, <<"Not The Document">>),
+	NoShell = iolist_to_binary(translate(
+		asciideck:parse(<<"= Title\n\nHi.\n">>),
+		#{no_header_footer => true})),
+	nomatch = binary:match(NoShell, <<"<title>">>),
+	Commented = html_page(<<"// note\n= After Comment\n\nX.\n">>),
+	{_, _} = binary:match(Commented, <<"<title>After Comment</title>">>),
+	Hidden = html_page(<<
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"= After Block\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Hidden, <<"<title>After Block</title>">>),
+	ok.
+
+html_title_attribute_test() ->
+	Override = html_page(<<
+		":title: Hello *world* & <tag>\n"
+		"= Document Title\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Override,
+		<<"<title>Hello *world* &amp; &lt;tag&gt;</title>">>),
+	{_, _} = binary:match(Override, <<"<h1 id=\"_document_title\">Document Title</h1>">>),
+	Empty = html_page(<<":title:\n= Document Title\n\nX.\n">>),
+	{_, _} = binary:match(Empty, <<"<title></title>">>),
+	Unset = html_page(<<
+		":title: SEO\n"
+		":title!:\n"
+		"= Document Title\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Unset, <<"<title>Document Title</title>">>),
+	Late = html_page(<<
+		"= Document Title\n"
+		"\n"
+		":title: Late\n"
+		"\n"
+		"X.\n">>),
+	{_, _} = binary:match(Late, <<"<title>Document Title</title>">>),
+	AfterPara = html_page(<<"Hello.\n\n:title: Nope\n">>),
+	{_, _} = binary:match(AfterPara, <<"<title></title>">>),
+	BeforePara = html_page(<<":title: Yep\n\nHello.\n">>),
+	{_, _} = binary:match(BeforePara, <<"<title>Yep</title>">>),
+	Author = html_page(<<":author: Joe\n= Document Title\n\nX.\n">>),
+	{_, _} = binary:match(Author, <<"<title>Document Title</title>">>),
+	Both = html_page(<<":author: Joe\n:title: SEO\n= Document Title\n\nX.\n">>),
+	{_, _} = binary:match(Both, <<"<title>SEO</title>">>),
+	ok.
+
+%% +++passthrough+++ is raw in the body. Inside <title> it is text,
+%% so a closing title tag in the document title cannot break out.
+
+html_title_passthrough_test() ->
+	Escaped = <<"&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;">>,
+	Break = html_page(<<"= Hello +++</title><script>alert(1)</script>+++\n\nX.\n">>),
+	{_, _} = binary:match(Break, <<"<title>Hello ", Escaped/binary, "</title>">>),
+	Upper = html_page(<<"= Hello +++</TITLE><script>alert(1)</script>+++\n\nX.\n">>),
+	{_, _} = binary:match(Upper,
+		<<"<title>Hello &lt;/TITLE&gt;&lt;script&gt;alert(1)&lt;/script&gt;</title>">>),
+	Strong = html_page(<<"= *+++</title><script>alert(1)</script>+++*\n\nX.\n">>),
+	{_, _} = binary:match(Strong,
+		<<"<title><strong>", Escaped/binary, "</strong></title>">>),
+	Code = html_page(<<"= `+++</title><script>alert(1)</script>+++`\n\nX.\n">>),
+	{_, _} = binary:match(Code,
+		<<"<title><code>", Escaped/binary, "</code></title>">>),
+	Body = html_page(<<"= Plain\n\n+++<em>keep</em>+++.\n">>),
+	{_, _} = binary:match(Body, <<"<title>Plain</title>">>),
+	{_, _} = binary:match(Body, <<"<p><em>keep</em>.</p>\n">>),
 	ok.
 -endif.

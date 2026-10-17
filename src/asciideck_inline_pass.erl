@@ -51,6 +51,10 @@ run([Item={_, #{<<"subs">> := <<"verbatim">>}, _, _}|Tail]) ->
 %% Comment blocks are not processed. The text stays in the AST.
 run([Block={comment_block, _, _, _}|Tail]) ->
 	[Block|run(Tail)];
+%% A title attribute is the HTML title text, not prose.
+%% Quotes in the value are not inline formatting.
+run([Entry={attribute_entry, #{name := <<"title">>}, _, _}|Tail]) ->
+	[Entry|run(Tail)];
 %% Labeled lists' labels can also have inline formatting.
 run([{Type, Attrs=#{label := Label}, Items, Ann}|Tail]) when is_list(Items) ->
 	[{Type, Attrs#{label => inline(Label)}, run(Items), Ann}|run(Tail)];
