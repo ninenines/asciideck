@@ -48,6 +48,9 @@ run([Data|Tail]) when is_binary(Data) ->
 %% @todo subs is a list of values.
 run([Item={_, #{<<"subs">> := <<"verbatim">>}, _, _}|Tail]) ->
 	[Item|run(Tail)];
+%% Comment blocks are not processed. The text stays in the AST.
+run([Block={comment_block, _, _, _}|Tail]) ->
+	[Block|run(Tail)];
 %% Labeled lists' labels can also have inline formatting.
 run([{Type, Attrs=#{label := Label}, Items, Ann}|Tail]) when is_list(Items) ->
 	[{Type, Attrs#{label => inline(Label)}, run(Items), Ann}|run(Tail)];
@@ -1668,5 +1671,13 @@ quote_verse_test() ->
 		], #{raw => <<"one\ntwo">>}}
 	]),
 	false = maps:is_key(raw, NoRaw2),
+	ok.
+
+comment_block_test() ->
+	[{comment_block, _, <<"hidden *stars*">>, _},
+		{paragraph, _, [{strong, _, <<"bold">>, _}], _}] = run([
+		{comment_block, #{}, <<"hidden *stars*">>, #{line => 1}},
+		{paragraph, #{}, <<"*bold*">>, #{line => 2}}
+	]),
 	ok.
 -endif.

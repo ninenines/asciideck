@@ -82,6 +82,7 @@ ast_node(Node={Type, _, _, _}) ->
 			table -> table(Node);
 			block_macro -> block_macro(Node);
 			comment_line -> comment_line(Node);
+			comment_block -> [];
 			attribute_entry -> [];
 			_ -> ast_error({unknown_type, Node})
 		end
@@ -396,7 +397,8 @@ table_body_cells(Cells) ->
 		|| {cell, _, AST, _} <- Cells].
 
 table_cell(AST0) ->
-	AST = [Node || Node={Type, _, _, _} <- AST0, Type =/= comment_line],
+	AST = [Node || Node={Type, _, _, _} <- AST0,
+		Type =/= comment_line, Type =/= comment_block],
 	case AST of
 		[{paragraph, _, Text, _}] ->
 			inline(Text);
@@ -1321,5 +1323,76 @@ example_block_test() ->
 		"<p>hello</p>\n"
 		"</div></div>\n"
 		"<p>after</p>\n">> = TrailHTML,
+	ok.
+
+%% User Guide 16.5. The block stays in the AST and is not written.
+comment_block_test() ->
+	AST = asciideck:parse(
+		"Before.\n"
+		"\n"
+		"////\n"
+		"hidden *stars*\n"
+		"////\n"
+		"\n"
+		"After.\n"),
+	[{paragraph, _, <<"Before.">>, _},
+		{comment_block, _, <<"hidden *stars*">>, _},
+		{paragraph, _, <<"After.">>, _}] = AST,
+	HTML = iolist_to_binary(translate(AST, #{no_header_footer => true})),
+	<<"<p>Before.</p>\n"
+		"<p>After.</p>\n">> = HTML,
+	Nested = asciideck:parse(
+		"====\n"
+		"visible\n"
+		"\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"\n"
+		"after\n"
+		"====\n"),
+	[{example_block, _, [
+		{paragraph, _, <<"visible">>, _},
+		{comment_block, _, <<"hidden">>, _},
+		{paragraph, _, <<"after">>, _}
+	], _}] = Nested,
+	NestedHTML = iolist_to_binary(translate(Nested, #{no_header_footer => true})),
+	<<"<div class=\"exampleblock\">\n"
+		"<div class=\"content\">\n"
+		"<p>visible</p>\n"
+		"<p>after</p>\n"
+		"</div></div>\n">> = NestedHTML,
+	%% A comment in a cell is not written, and the cell stays one paragraph.
+	Table = asciideck:parse(
+		"|===\n"
+		"|A |B\n"
+		"|C\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"|D\n"
+		"|===\n"),
+	[{table, _, [
+		{row, _, [
+			{cell, _, [{paragraph, _, <<"A">>, _}], _},
+			{cell, _, [{paragraph, _, <<"B">>, _}], _}
+		], _},
+		{row, _, [
+			{cell, _, [
+				{paragraph, _, <<"C">>, _},
+				{comment_block, _, <<"hidden">>, _}
+			], _},
+			{cell, _, [{paragraph, _, <<"D">>, _}], _}
+		], _}
+	], _}] = Table,
+	TableHTML = iolist_to_binary(translate(Table, #{no_header_footer => true})),
+	<<"<table rules=\"all\" width=\"100%\" frame=\"border\"\n"
+		"			cellspacing=\"0\" cellpadding=\"4\">\n"
+		"<thead><tr><th>A</th>\n"
+		"<th>B</th>\n"
+		"</tr></thead><tbody><tr><td>C</td>\n"
+		"<td>D</td>\n"
+		"</tr>\n"
+		"</tbody></table>\n">> = TableHTML,
 	ok.
 -endif.

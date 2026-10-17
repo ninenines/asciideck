@@ -286,3 +286,108 @@ example_block(_) ->
 	{_, _} = binary:match(NoteMan, <<"Hello.">>),
 	nomatch = binary:match(NoteMan, <<"Ignored AST node">>),
 	ok.
+
+comment_block(_) ->
+	doc("Comment blocks are kept out of man pages. (16.5)"),
+	AST = asciideck:parse(
+		"= comment(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"comment - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"////\n"
+		"hidden stars\n"
+		"////\n"
+		"\n"
+		"Visible.\n"),
+	[{paragraph, _, <<"Visible.">>, _},
+		{comment_block, _, <<"hidden stars">>, _}|_] = lists:reverse(AST),
+	Man = iolist_to_binary(asciideck:to_manpage(AST)),
+	{_, _} = binary:match(Man, <<"Visible.">>),
+	nomatch = binary:match(Man, <<"hidden stars">>),
+	nomatch = binary:match(Man, <<"Ignored AST node">>),
+	BeforeTitle = asciideck:parse(
+		"////\n"
+		"one\n"
+		"////\n"
+		"\n"
+		"////\n"
+		"two\n"
+		"////\n"
+		"\n"
+		"= foo(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"foo - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"Visible.\n"),
+	[{comment_block, _, <<"one">>, _},
+		{comment_block, _, <<"two">>, _}|_] = BeforeTitle,
+	BeforeTitleMan = iolist_to_binary(asciideck:to_manpage(BeforeTitle)),
+	{_, _} = binary:match(BeforeTitleMan, <<".TH \"foo\"">>),
+	{_, _} = binary:match(BeforeTitleMan, <<"Visible.">>),
+	nomatch = binary:match(BeforeTitleMan, <<"one">>),
+	nomatch = binary:match(BeforeTitleMan, <<"two">>),
+	BeforeName = asciideck:parse(
+		"= foo(3)\n"
+		"\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"foo - test\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"Visible.\n"),
+	[{section_title, #{level := 0}, <<"foo(3)">>, _},
+		{comment_block, _, <<"hidden">>, _}|_] = BeforeName,
+	BeforeNameMan = iolist_to_binary(asciideck:to_manpage(BeforeName)),
+	{_, _} = binary:match(BeforeNameMan, <<"Visible.">>),
+	nomatch = binary:match(BeforeNameMan, <<"hidden">>),
+	Table = asciideck:parse(
+		"= c(3)\n"
+		"\n"
+		"== Name\n"
+		"\n"
+		"c - t\n"
+		"\n"
+		"== Description\n"
+		"\n"
+		"|===\n"
+		"|A |B\n"
+		"|C\n"
+		"////\n"
+		"hidden\n"
+		"////\n"
+		"|D\n"
+		"|\n"
+		"////\n"
+		"gone\n"
+		"////\n"
+		"|E\n"
+		"|===\n"
+		"\n"
+		"Visible.\n"),
+	[{table, _, Rows, _}] = [Node || Node={table, _, _, _} <- Table],
+	{row, _, [{cell, _, [
+		{comment_block, _, <<"gone">>, _}
+	], _}, _], _} = lists:last(Rows),
+	TableMan = iolist_to_binary(asciideck:to_manpage(Table)),
+	{_, _} = binary:match(TableMan, <<"T{\nA\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nB\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nC\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nD\nT}">>),
+	{_, _} = binary:match(TableMan, <<"T{\nE\nT}">>),
+	{_, _} = binary:match(TableMan, <<"Visible.">>),
+	nomatch = binary:match(TableMan, <<"hidden">>),
+	nomatch = binary:match(TableMan, <<"gone">>),
+	ok.

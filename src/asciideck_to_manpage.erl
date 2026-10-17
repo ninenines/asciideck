@@ -33,7 +33,12 @@ translate(AST, Opts) ->
 	end.
 
 %% Header of the man page file.
+%%
+%% Comment blocks are not written. One before the title, or between
+%% the title and the Name section, must not hide either.
 
+man([{comment_block, _, _, _}|AST], Opts) ->
+	man(AST, Opts);
 man([{section_title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
 	ensure_name_section(AST),
 	[Title, << Section:1/binary, _/bits >>] = binary:split(Title0, <<"(">>),
@@ -47,6 +52,8 @@ man([{section_title, #{level := 0}, Title0, _Ann}|AST], Opts) ->
 		ast(AST)
 	]}.
 
+ensure_name_section([{comment_block, _, _, _}|AST]) ->
+	ensure_name_section(AST);
 ensure_name_section([{section_title, #{level := 1}, Title, _}|_]) ->
 	case string:to_lower(string:strip(binary_to_list(Title))) of
 		"name" -> ok;
@@ -85,6 +92,7 @@ ast_node(Node={Type, _, _, _}) ->
 			list -> list(Node);
 			table -> table(Node);
 			comment_line -> comment_line(Node);
+			comment_block -> [];
 			attribute_entry -> [];
 			_ ->
 				io:format("Ignored AST node ~p~n", [Node]),
@@ -346,8 +354,13 @@ table_contents_cells([FirstCell|Cells]) ->
 	[table_contents_cell(FirstCell),
 		[[":", table_contents_cell(Cell)] || Cell <- Cells]].
 
-table_contents_cell({cell, _, [{paragraph, _, Text, _}], _}) ->
-	["T{\n", inline(Text), "\nT}"].
+table_contents_cell({cell, _, Blocks, _}) ->
+	case [Node || Node={Type, _, _, _} <- Blocks, Type =/= comment_block] of
+		[{paragraph, _, Text, _}] ->
+			["T{\n", inline(Text), "\nT}"];
+		[] ->
+			["T{\n\nT}"]
+	end.
 
 %% Comment lines are printed in the generated file
 %% but are not visible in viewers.
